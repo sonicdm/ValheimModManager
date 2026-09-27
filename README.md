@@ -33,15 +33,17 @@ Do **not** copy this working folder as-is (`.venv`, `node_modules`, and `data/` 
 1. Clone and configure paths for **your** host (vanilla layout shown):
 
 ```bash
-git clone <your-repo-url> ValheimModManager
+git clone https://github.com/sonicdm/ValheimModManager.git
 cd ValheimModManager
 cp .env.example .env
 ```
 
-Edit `.env`:
+Edit `.env` (required values first):
 
-| Variable | Typical host path (lloesche) |
+| Variable | Typical value |
 |---|---|
+| `MOD_MANAGER_SECRET_KEY` | Long random string (session/CSRF signing) |
+| `MOD_MANAGER_ADMIN_PASSWORD` | UI login password for user `admin` |
 | `VALHEIM_BEPINEX_PATH` | `$HOME/valheim-server/config/bepinex` |
 | `VALHEIM_DOCKER_NETWORK` | Network of the Valheim container (`docker network ls`) |
 | `SUPERVISOR_URL` | `http://<valheim-container-name>:9001` |
@@ -57,12 +59,12 @@ Do **not** mount `data/bepinex` or its `plugins`/`patchers` subfolders into the 
 docker compose up -d --build
 ```
 
-4. Open http://localhost:8090 and sign in as `admin`.
+4. Open http://localhost:8090 and sign in as `admin` with `MOD_MANAGER_ADMIN_PASSWORD`.
 5. Click **Scan plugins** on the dashboard.
 
 Docker builds the Python env and frontend inside the image. Persistent manager state lives in the `mod_manager_data` volume, not in the repo.
 
-## Merge into the Valheim compose later
+## Merge into the Valheim compose
 
 Add a sibling service that mounts `./config/bepinex` (at both `/valheim/bepinex` and `/config/bepinex`) and talks to `http://valheim:9001` (or whatever your Valheim service/`--name` is). See `docker-compose.merge.example.yml`.
 
