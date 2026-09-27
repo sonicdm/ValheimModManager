@@ -276,49 +276,6 @@ export default function PackageDetailPage() {
       </div>
 
       <div className="rounded-2xl border border-bark/10 bg-paper/80 p-5">
-        <div className="flex flex-wrap gap-2 border-b border-bark/10 pb-3">
-          {(
-            [
-              ["readme", "Details"],
-              ["changelog", "Changelog"],
-            ] as const
-          ).map(([kind, label]) => {
-            const missing = docs[kind]?.missing;
-            return (
-              <button
-                key={kind}
-                type="button"
-                onClick={() => setDocTab(kind)}
-                className={[
-                  "rounded-full px-3 py-1.5 text-sm transition",
-                  docTab === kind ? "bg-moss text-paper" : "bg-mist/70 text-bark hover:bg-mist",
-                  missing ? "opacity-60" : "",
-                ].join(" ")}
-              >
-                {label}
-                {missing ? " (none)" : ""}
-              </button>
-            );
-          })}
-        </div>
-        <div className="mt-4 min-h-[8rem]">
-          {docsBusy && <p className="text-sm text-bark/60">Loading package page…</p>}
-          {docsError && <p className="text-sm text-danger">{docsError}</p>}
-          {!docsBusy && !docsError && activeDoc?.missing && (
-            <p className="text-sm text-bark/55">
-              No {docTab} published for this version on {pkg.source}.
-            </p>
-          )}
-          {!docsBusy && !docsError && activeDoc && !activeDoc.missing && activeDoc.html && (
-            <div
-              className="package-docs text-sm text-bark/85"
-              dangerouslySetInnerHTML={{ __html: activeDoc.html }}
-            />
-          )}
-        </div>
-      </div>
-
-      <div className="rounded-2xl border border-bark/10 bg-paper/80 p-5">
         <h3 className="font-display text-2xl">Install</h3>
         <div className="mt-3 flex flex-wrap items-end gap-2">
           <label className="text-sm">
@@ -452,6 +409,49 @@ export default function PackageDetailPage() {
             ))}
           </div>
         )}
+      </div>
+
+      <div className="rounded-2xl border border-bark/10 bg-paper/80 p-5">
+        <div className="flex flex-wrap gap-2 border-b border-bark/10 pb-3">
+          {(
+            [
+              ["readme", "Details"],
+              ["changelog", "Changelog"],
+            ] as const
+          ).map(([kind, label]) => {
+            const missing = docs[kind]?.missing;
+            return (
+              <button
+                key={kind}
+                type="button"
+                onClick={() => setDocTab(kind)}
+                className={[
+                  "rounded-full px-3 py-1.5 text-sm transition",
+                  docTab === kind ? "bg-moss text-paper" : "bg-mist/70 text-bark hover:bg-mist",
+                  missing ? "opacity-60" : "",
+                ].join(" ")}
+              >
+                {label}
+                {missing ? " (none)" : ""}
+              </button>
+            );
+          })}
+        </div>
+        <div className="mt-4 min-h-[8rem]">
+          {docsBusy && <p className="text-sm text-bark/60">Loading package page…</p>}
+          {docsError && <p className="text-sm text-danger">{docsError}</p>}
+          {!docsBusy && !docsError && activeDoc?.missing && (
+            <p className="text-sm text-bark/55">
+              No {docTab} published for this version on {pkg.source}.
+            </p>
+          )}
+          {!docsBusy && !docsError && activeDoc && !activeDoc.missing && activeDoc.html && (
+            <div
+              className="package-docs text-sm text-bark/85"
+              dangerouslySetInnerHTML={{ __html: activeDoc.html }}
+            />
+          )}
+        </div>
       </div>
 
       <div className="rounded-2xl border border-bark/10 bg-paper/80 p-5">
