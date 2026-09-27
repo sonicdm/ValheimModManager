@@ -80,10 +80,10 @@ def _find_configs(config_dir: Path, guid: str | None, name: str | None) -> list[
         elif name and name.lower().replace(" ", "") in cfg.name.lower().replace(" ", ""):
             matches.append(cfg.name)
     # known mappings
+    # Common Thunderstore package → cfg filename hints (not host-specific).
     known = {
         "serverdevcommands": "server_devcommands.cfg",
         "webmap": "com.valheimwebmap.server.cfg",
-        "portalatlas": "sonicdm.valheimportallist.cfg",
         "jotunn": None,
     }
     key = (name or "").lower().replace(" ", "").replace("ö", "o")
@@ -249,7 +249,7 @@ def scan_plugins(settings: Settings | None = None) -> list[ScannedPlugin]:
                 )
             )
 
-    # Live-only plugins (present on data, absent from config) — e.g. WebMap
+    # Live-only plugins (present under /opt/valheim live tree, absent from /config/bepinex)
     live = settings.live_plugins_root
     if live is not None and live.is_dir():
         for name in sorted(live_only_plugin_names(settings), key=str.lower):

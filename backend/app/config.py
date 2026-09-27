@@ -19,12 +19,12 @@ class Settings(BaseSettings):
     admin_password: str = "changeme"
     session_cookie: str = "vmm_session"
     session_max_age: int = 60 * 60 * 24 * 7
-    timezone: str = "America/Los_Angeles"
+    timezone: str = "UTC"
     supervisor_url: str = ""
     supervisor_user: str = "admin"
     supervisor_password: str = ""
     supervisor_program: str = "valheim-server"
-    container_display_name: str = "BabyGotBoar"
+    container_display_name: str = "valheim"
     thunderstore_api: str = "https://thunderstore.io/c/valheim/api/v1/package/"
     hexium_api: str = "https://valheim.hexium.gg/api/v1/package/"
     package_refresh_minutes: int = 60

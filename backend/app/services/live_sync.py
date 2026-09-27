@@ -174,7 +174,7 @@ def sync_config_tree_to_live(settings: Settings | None = None, **kwargs) -> dict
 
 
 def remove_paths_from_live(relative_plugin_paths: list[str], settings: Settings | None = None) -> int:
-    """Remove from live — but never wipe a live-only root (preserves WebMap/map_data)."""
+    """Remove from live — but never wipe a live-only root (preserves runtime data)."""
     settings = settings or get_settings()
     if not live_sync_available(settings):
         return 0
@@ -207,7 +207,7 @@ def remove_paths_from_live(relative_plugin_paths: list[str], settings: Settings 
 
 
 def merge_tree_into(src: Path, dest: Path) -> list[tuple[str, Path]]:
-    """Copy package files into dest without deleting existing dest files (keeps map_data)."""
+    """Copy package files into dest without deleting existing dest files (keeps runtime data)."""
     dest.mkdir(parents=True, exist_ok=True)
     copied: list[tuple[str, Path]] = []
     if src.is_file():

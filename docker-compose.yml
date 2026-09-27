@@ -6,17 +6,17 @@ services:
       - "8090:8090"
     volumes:
       - mod_manager_data:/data
-      # Persistent mod source of truth (lloesche /config/bepinex)
+      # lloesche persistent BepInEx tree → /config/bepinex
       - type: bind
-        source: ${VALHEIM_BEPINEX_PATH:-H:/Games/Valheim Server/Docker/config/bepinex}
+        source: ${VALHEIM_BEPINEX_PATH:?Set VALHEIM_BEPINEX_PATH to your host .../config/bepinex}
         target: /valheim/bepinex
-      # Live install dirs — writable so we can sync without touching the Valheim image.
-      # Restart uses Supervisor only; sync happens in this container first.
+      # Live install under /opt/valheim/bepinex/BepInEx/{plugins,patchers}
+      # Writable so the manager can mirror config→live without modifying the Valheim image.
       - type: bind
-        source: ${VALHEIM_LIVE_PLUGINS_PATH:-H:/Games/Valheim Server/Docker/data/bepinex/BepInEx/plugins}
+        source: ${VALHEIM_LIVE_PLUGINS_PATH:?Set VALHEIM_LIVE_PLUGINS_PATH to .../data/bepinex/BepInEx/plugins}
         target: /valheim/live-plugins
       - type: bind
-        source: ${VALHEIM_LIVE_PATCHERS_PATH:-H:/Games/Valheim Server/Docker/data/bepinex/BepInEx/patchers}
+        source: ${VALHEIM_LIVE_PATCHERS_PATH:?Set VALHEIM_LIVE_PATCHERS_PATH to .../data/bepinex/BepInEx/patchers}
         target: /valheim/live-patchers
     environment:
       - DATA_DIR=/data
@@ -24,12 +24,13 @@ services:
       - LIVE_PLUGINS_ROOT=/valheim/live-plugins
       - SECRET_KEY=${MOD_MANAGER_SECRET_KEY:-change-me-in-production}
       - ADMIN_PASSWORD=${MOD_MANAGER_ADMIN_PASSWORD:-changeme}
-      - SUPERVISOR_URL=${SUPERVISOR_URL:-http://BabyGotBoar:9001}
+      # Prefer the Valheim container DNS name on a shared Docker network.
+      - SUPERVISOR_URL=${SUPERVISOR_URL:-http://valheim:9001}
       - SUPERVISOR_USER=${SUPERVISOR_USER:-admin}
       - SUPERVISOR_PASSWORD=${SUPERVISOR_PASSWORD:-}
-      - SUPERVISOR_PROGRAM=valheim-server
-      - CONTAINER_DISPLAY_NAME=BabyGotBoar
-      - TIMEZONE=America/Los_Angeles
+      - SUPERVISOR_PROGRAM=${SUPERVISOR_PROGRAM:-valheim-server}
+      - CONTAINER_DISPLAY_NAME=${CONTAINER_DISPLAY_NAME:-valheim}
+      - TIMEZONE=${TIMEZONE:-UTC}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
@@ -43,4 +44,5 @@ volumes:
 networks:
   valheim:
     external: true
-    name: ${VALHEIM_DOCKER_NETWORK:-docker_default}
+    # Same network as the Valheim container (docker network ls / docker inspect).
+    name: ${VALHEIM_DOCKER_NETWORK:?Set VALHEIM_DOCKER_NETWORK to the Valheim container network}

@@ -112,7 +112,7 @@ async def check_for_updates(db: Session) -> list[PendingUpdate]:
 
 
 def _in_maintenance_window(db: Session, now: datetime | None = None) -> bool:
-    tz_name = get_setting(db, "timezone", "America/Los_Angeles") or "America/Los_Angeles"
+    tz_name = get_setting(db, "timezone", "UTC") or "UTC"
     try:
         tz = ZoneInfo(tz_name)
     except Exception:
@@ -130,7 +130,7 @@ def _in_maintenance_window(db: Session, now: datetime | None = None) -> bool:
 
 
 def next_maintenance_window(db: Session) -> str:
-    tz_name = get_setting(db, "timezone", "America/Los_Angeles") or "America/Los_Angeles"
+    tz_name = get_setting(db, "timezone", "UTC") or "UTC"
     try:
         tz = ZoneInfo(tz_name)
     except Exception:
@@ -220,7 +220,7 @@ def configure_scheduler() -> None:
     try:
         refresh_min = int(get_setting(db, "package_refresh_minutes", 60) or 60)
         update_min = int(get_setting(db, "update_check_minutes", 60) or 60)
-        tz_name = get_setting(db, "timezone", "America/Los_Angeles") or "America/Los_Angeles"
+        tz_name = get_setting(db, "timezone", "UTC") or "UTC"
         hour = int(get_setting(db, "maintenance_hour", 4) or 4)
         minute = int(get_setting(db, "maintenance_minute", 0) or 0)
     finally:

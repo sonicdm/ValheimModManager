@@ -257,7 +257,7 @@ async def install_packages(
             ensure_within(files_root, dest_dir)
 
             if live_only:
-                # Merge package files into existing live tree; never wipe (preserves map_data).
+                # Merge package files into existing live tree; never wipe (preserves runtime data).
                 to_overwrite: list[Path] = []
                 if plugin_root.is_file():
                     to_overwrite.append(dest_dir / plugin_root.name)

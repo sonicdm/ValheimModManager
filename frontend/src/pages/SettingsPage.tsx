@@ -84,7 +84,7 @@ export default function SettingsPage() {
               className="mt-1 w-full rounded border border-bark/20 px-3 py-2"
               value={String(values.supervisor_url ?? "")}
               onChange={(e) => setField("supervisor_url", e.target.value)}
-              placeholder="http://host.docker.internal:9001"
+              placeholder="http://valheim:9001"
             />
           </label>
           <label className="text-sm">

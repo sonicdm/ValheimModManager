@@ -1,9 +1,14 @@
-# Example: merge into the existing Valheim Server docker-compose.yaml later.
-# Do not apply until the standalone manager is proven.
+# Example: add the manager as a sibling of the vanilla lloesche Valheim service.
+# Adjust container/service names and host paths to match your Valheim compose.
 #
 # services:
 #   valheim:
-#     # existing BabyGotBoar service unchanged
+#     image: ghcr.io/lloesche/valheim-server
+#     # ... existing Valheim service unchanged ...
+#     environment:
+#       - BEPINEX=true
+#       - SUPERVISOR_HTTP=true
+#       # - SUPERVISOR_HTTP_PASS=...
 #
 #   mod-manager:
 #     build: /path/to/ValheimModManager
@@ -13,16 +18,18 @@
 #       - "8090:8090"
 #     volumes:
 #       - ./config/bepinex:/valheim/bepinex
-#       - ./data/bepinex/BepInEx/plugins:/valheim/live-plugins:ro
+#       - ./data/bepinex/BepInEx/plugins:/valheim/live-plugins
+#       - ./data/bepinex/BepInEx/patchers:/valheim/live-patchers
 #       - mod_manager_data:/data
 #     environment:
 #       - SECRET_KEY=${MOD_MANAGER_SECRET_KEY}
 #       - ADMIN_PASSWORD=${MOD_MANAGER_ADMIN_PASSWORD}
-#       - SUPERVISOR_URL=http://BabyGotBoar:9001
+#       - SUPERVISOR_URL=http://valheim:9001
 #       - SUPERVISOR_USER=admin
-#       - SUPERVISOR_PASSWORD=${SUPERVISOR_HTTP_PASS}
-#       - CONTAINER_DISPLAY_NAME=BabyGotBoar
-#       - TIMEZONE=America/Los_Angeles
+#       - SUPERVISOR_PASSWORD=${SUPERVISOR_HTTP_PASS:-}
+#       - SUPERVISOR_PROGRAM=valheim-server
+#       - CONTAINER_DISPLAY_NAME=valheim
+#       - TIMEZONE=UTC
 #     restart: unless-stopped
 #
 # volumes:

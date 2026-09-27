@@ -121,7 +121,9 @@ def diagnose(db: Session) -> dict[str, Any]:
     }
     if base is None:
         result["error"] = "SUPERVISOR_URL is not set"
-        result["hint"] = "Set SUPERVISOR_URL=http://BabyGotBoar:9001 and join the Valheim Docker network"
+        result["hint"] = (
+            "Set SUPERVISOR_URL=http://<valheim-container>:9001 and join that container's Docker network"
+        )
         return result
 
     url, user, password = base
@@ -149,8 +151,8 @@ def diagnose(db: Session) -> dict[str, Any]:
         result["dns_ok"] = False
         result["error"] = _friendly_error(exc)
         result["hint"] = (
-            "Join the Valheim compose network and use http://BabyGotBoar:9001. "
-            "Run: docker network ls"
+            "Join the Valheim container's Docker network and use its DNS name, "
+            "e.g. http://valheim:9001. Run: docker network ls / docker inspect <container>"
         )
         return result
 
@@ -161,10 +163,14 @@ def diagnose(db: Session) -> dict[str, Any]:
         result["tcp_ok"] = False
         result["error"] = _friendly_error(exc)
         if host in {"localhost", "127.0.0.1"}:
-            result["hint"] = "localhost inside the container is not the host — use BabyGotBoar or host.docker.internal"
+            result["hint"] = (
+                "localhost inside the container is not the host — use the Valheim "
+                "container DNS name on a shared network, or host.docker.internal if Supervisor is published"
+            )
         else:
             result["hint"] = (
-                "TCP failed. Prefer container DNS: attach to the Valheim network and use http://BabyGotBoar:9001"
+                "TCP failed. Prefer container DNS: attach to the Valheim network "
+                "and use http://<valheim-container>:9001"
             )
         return result
 

@@ -699,7 +699,7 @@ def server_status(
     return {
         "configured": supervisor.supervisor_configured(db),
         "status": supervisor.get_process_status(db),
-        "display_name": get_setting(db, "container_display_name", "BabyGotBoar"),
+        "display_name": get_setting(db, "container_display_name", "valheim"),
     }
 
 
