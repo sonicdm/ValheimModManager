@@ -18,8 +18,8 @@
 #       - "8090:8090"
 #     volumes:
 #       - ./config/bepinex:/valheim/bepinex
-#       - ./data/bepinex/BepInEx/plugins:/valheim/live-plugins
-#       - ./data/bepinex/BepInEx/patchers:/valheim/live-patchers
+#       # Same host path so persistent-package symlinks resolve at /config/bepinex/...
+#       - ./config/bepinex:/config/bepinex
 #       - mod_manager_data:/data
 #     environment:
 #       - SECRET_KEY=${MOD_MANAGER_SECRET_KEY}

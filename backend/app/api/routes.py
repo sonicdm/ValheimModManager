@@ -341,6 +341,32 @@ def remove_plugin(
     return {"status": "ok"}
 
 
+@router.post("/plugins/{package_id}/persistent", response_model=InstalledPackageOut)
+def mark_plugin_persistent(
+    package_id: int,
+    user: Annotated[AdminUser, Depends(_auth_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> InstalledPackageOut:
+    try:
+        pkg = installer.set_package_persistent(db, package_id, True)
+    except (ValueError, FileNotFoundError, FileExistsError, OSError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return _pkg_out(pkg)
+
+
+@router.post("/plugins/{package_id}/normal", response_model=InstalledPackageOut)
+def mark_plugin_normal(
+    package_id: int,
+    user: Annotated[AdminUser, Depends(_auth_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> InstalledPackageOut:
+    try:
+        pkg = installer.set_package_persistent(db, package_id, False)
+    except (ValueError, FileNotFoundError, FileExistsError, OSError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return _pkg_out(pkg)
+
+
 @router.post("/plugins/{package_id}/link", response_model=InstalledPackageOut)
 def link_plugin(
     package_id: int,

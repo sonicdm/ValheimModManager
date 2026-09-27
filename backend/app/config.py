@@ -6,13 +6,19 @@ from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+# Absolute path used inside the Valheim container for BepInEx config.
+# Symlink targets must use this prefix so they resolve after bootstrap copies them.
+VALHEIM_CONFIG_BEPINEX = Path("/config/bepinex")
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     app_name: str = "Valheim Mod Manager"
     data_dir: Path = Path("/data")
     bepinex_root: Path = Path("/valheim/bepinex")
-    live_plugins_root: Path | None = Path("/valheim/live-plugins")
+    # Deprecated: do not mount data/bepinex. Kept for env compatibility; always unused when None.
+    live_plugins_root: Path | None = None
     host: str = "0.0.0.0"
     port: int = 8090
     secret_key: str = "change-me-in-production"
@@ -60,6 +66,11 @@ class Settings(BaseSettings):
     @property
     def config_dir(self) -> Path:
         return self.bepinex_root
+
+    @property
+    def persistent_dir(self) -> Path:
+        """Bulky packages live here; plugins/<name> is a symlink into this tree."""
+        return self.bepinex_root / ".persistent"
 
 
 @lru_cache

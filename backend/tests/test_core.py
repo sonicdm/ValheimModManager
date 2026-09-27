@@ -125,3 +125,86 @@ Distance = 25
     updated = structured_to_raw(raw, structured)
     assert "Enabled = false" in updated
     assert "Distance = 25" in updated
+
+
+def test_live_sync_available_never_creates_dirs(tmp_path: Path):
+    from app.services.live_sync import live_sync_available
+
+    settings = Settings(data_dir=tmp_path / "data", bepinex_root=tmp_path, live_plugins_root=None)
+    assert live_sync_available(settings) is False
+    assert not (tmp_path / "plugins").exists()
+    assert not (tmp_path / ".persistent").exists()
+
+
+def test_make_persistent_creates_symlink(tmp_path: Path):
+    from app.config import VALHEIM_CONFIG_BEPINEX
+    from app.services.live_sync import is_persistent_link, make_normal, make_persistent
+
+    plugins = tmp_path / "plugins"
+    pkg = plugins / "HugeMapMod"
+    pkg.mkdir(parents=True)
+    (pkg / "Map.dll").write_bytes(b"MZ")
+    (pkg / "tiles").mkdir()
+    (pkg / "tiles" / "a.png").write_bytes(b"png")
+
+    settings = Settings(data_dir=tmp_path / "data", bepinex_root=tmp_path, live_plugins_root=None)
+    try:
+        dest = make_persistent("HugeMapMod", settings)
+    except OSError as exc:
+        pytest.skip(f"symlinks not allowed on this host: {exc}")
+
+    link = plugins / "HugeMapMod"
+    assert dest == tmp_path / ".persistent" / "HugeMapMod"
+    assert dest.is_dir()
+    assert (dest / "Map.dll").is_file()
+    assert link.is_symlink()
+    assert is_persistent_link(link, settings)
+    assert link.readlink() == VALHEIM_CONFIG_BEPINEX / ".persistent" / "HugeMapMod"
+
+    restored = make_normal("HugeMapMod", settings)
+    assert restored == plugins / "HugeMapMod"
+    assert restored.is_dir()
+    assert not restored.is_symlink()
+    assert (restored / "Map.dll").is_file()
+    assert not (tmp_path / ".persistent" / "HugeMapMod").exists()
+
+
+def test_restart_server_stop_bootstrap_start(monkeypatch):
+    from app.services import supervisor as sup
+
+    calls: list[tuple] = []
+    states = {
+        "valheim-server": "RUNNING",
+        "valheim-bootstrap": "EXITED",
+    }
+
+    class FakeProxy:
+        class supervisor:  # noqa: N801
+            @staticmethod
+            def getProcessInfo(program: str):
+                return {"statename": states[program]}
+
+            @staticmethod
+            def stopProcess(program: str):
+                calls.append(("stop", program))
+                states[program] = "STOPPED"
+
+            @staticmethod
+            def startProcess(program: str):
+                calls.append(("start", program))
+                if program == "valheim-bootstrap":
+                    states[program] = "EXITED"
+                else:
+                    states[program] = "RUNNING"
+
+    monkeypatch.setattr(sup, "_proxy", lambda db: FakeProxy())
+    monkeypatch.setattr(sup, "get_setting", lambda db, key, default=None: default)
+
+    result = sup.restart_server(db=None)  # type: ignore[arg-type]
+    assert result["ok"] is True
+    assert result["synced"] is True
+    assert calls == [
+        ("stop", "valheim-server"),
+        ("start", "valheim-bootstrap"),
+        ("start", "valheim-server"),
+    ]

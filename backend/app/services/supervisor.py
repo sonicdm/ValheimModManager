@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import socket
+import time
 import xmlrpc.client
 from typing import Any
 from urllib.parse import quote, urlparse
@@ -12,7 +13,11 @@ from .settings_service import get_setting
 
 logger = logging.getLogger(__name__)
 
-SUPERVISOR_TIMEOUT_SECONDS = 2.0
+# stopwaitsecs for valheim-server is 90; leave headroom for stop + bootstrap.
+SUPERVISOR_TIMEOUT_SECONDS = 120.0
+BOOTSTRAP_PROGRAM = "valheim-bootstrap"
+BOOTSTRAP_WAIT_SECONDS = 300.0
+BOOTSTRAP_POLL_SECONDS = 1.0
 
 
 class _TimeoutTransport(xmlrpc.client.Transport):
@@ -104,74 +109,60 @@ def get_process_status(db: Session) -> str | None:
         return f"error: {_friendly_error(exc)}"
 
 
-def diagnose(db: Session) -> dict[str, Any]:
-    """Return a step-by-step connection diagnosis for the UI / ops."""
-    base = _supervisor_base(db)
+def _process_state(proxy: xmlrpc.client.ServerProxy, program: str) -> str:
+    info = proxy.supervisor.getProcessInfo(program)
+    return str(info.get("statename") or "")
+
+
+def _stop_process(proxy: xmlrpc.client.ServerProxy, program: str) -> None:
+    state = _process_state(proxy, program)
+    if state in {"STOPPED", "EXITED", "FATAL", "UNKNOWN"}:
+        return
+    try:
+        proxy.supervisor.stopProcess(program)
+    except xmlrpc.client.Fault as exc:
+        # Already stopped is fine
+        if "NOT_RUNNING" not in str(exc) and "NOTRUNNING" not in str(exc):
+            raise
+
+
+def _wait_bootstrap_exited(proxy: xmlrpc.client.ServerProxy) -> str:
+    deadline = time.monotonic() + BOOTSTRAP_WAIT_SECONDS
+    last = ""
+    while time.monotonic() < deadline:
+        last = _process_state(proxy, BOOTSTRAP_PROGRAM)
+        if last in {"EXITED", "FATAL", "STOPPED"}:
+            return last
+        time.sleep(BOOTSTRAP_POLL_SECONDS)
+    raise TimeoutError(f"{BOOTSTRAP_PROGRAM} did not exit within {int(BOOTSTRAP_WAIT_SECONDS)}s (last={last})")
+
+
+def diagnose_supervisor(db: Session) -> dict[str, Any]:
     result: dict[str, Any] = {
-        "configured": base is not None,
-        "url": None,
-        "host": None,
-        "port": None,
-        "dns_ok": None,
-        "tcp_ok": None,
-        "rpc_ok": None,
+        "configured": supervisor_configured(db),
+        "tcp_ok": False,
+        "rpc_ok": False,
         "status": None,
         "error": None,
         "hint": None,
     }
+    base = _supervisor_base(db)
     if base is None:
-        result["error"] = "SUPERVISOR_URL is not set"
-        result["hint"] = (
-            "Set SUPERVISOR_URL=http://<valheim-container>:9001 and join that container's Docker network"
-        )
+        result["hint"] = "Set SUPERVISOR_URL (e.g. http://valheim:9001 on the shared Docker network)"
         return result
-
-    url, user, password = base
-    result["url"] = url
-    result["auth_configured"] = bool(password)
-    result["user"] = user
-
-    raw = url
-    if "://" not in raw:
-        raw = "http://" + raw
-    parsed = urlparse(raw)
-    host = parsed.hostname
-    port = parsed.port or 9001
-    result["host"] = host
-    result["port"] = port
-
-    if not host:
-        result["error"] = "Could not parse host from SUPERVISOR_URL"
-        return result
-
+    url, _user, _password = base
     try:
-        socket.getaddrinfo(host, port)
-        result["dns_ok"] = True
-    except socket.gaierror as exc:
-        result["dns_ok"] = False
-        result["error"] = _friendly_error(exc)
-        result["hint"] = (
-            "Join the Valheim container's Docker network and use its DNS name, "
-            "e.g. http://valheim:9001. Run: docker network ls / docker inspect <container>"
-        )
-        return result
-
-    try:
+        parsed = urlparse(url if "://" in url else f"http://{url}")
+        host = parsed.hostname or "127.0.0.1"
+        port = parsed.port or 9001
         with socket.create_connection((host, port), timeout=SUPERVISOR_TIMEOUT_SECONDS):
             result["tcp_ok"] = True
     except OSError as exc:
-        result["tcp_ok"] = False
         result["error"] = _friendly_error(exc)
-        if host in {"localhost", "127.0.0.1"}:
-            result["hint"] = (
-                "localhost inside the container is not the host — use the Valheim "
-                "container DNS name on a shared network, or host.docker.internal if Supervisor is published"
-            )
-        else:
-            result["hint"] = (
-                "TCP failed. Prefer container DNS: attach to the Valheim network "
-                "and use http://<valheim-container>:9001"
-            )
+        result["hint"] = (
+            "TCP failed. Prefer container DNS: attach to the Valheim network "
+            "and use http://<valheim-container>:9001"
+        )
         return result
 
     status = get_process_status(db)
@@ -189,37 +180,48 @@ def diagnose(db: Session) -> dict[str, Any]:
 
 
 def restart_server(db: Session) -> dict[str, Any]:
-    # Sync config → live BepInEx install before restarting the game process.
-    # lloesche only rsyncs plugins on BepInEx update/bootstrap; we do not modify that image.
-    from .live_sync import live_sync_available, sync_config_tree_to_live
+    """Stop valheim-server, run valheim-bootstrap (config→live sync), then start the server.
 
-    sync_info: dict[str, Any] = {"synced": False}
-    if live_sync_available():
-        sync_info = {"synced": True, **sync_config_tree_to_live()}
-    else:
-        sync_info["warning"] = (
-            "Live plugins path not writable; restarting game only. "
-            "Mount data/.../BepInEx/plugins read-write for installs to take effect."
-        )
-        logger.warning(sync_info["warning"])
-
+    Bootstrap is the only image path that rsyncs config/bepinex into the live tree.
+    Restarting valheim-server alone does not sync plugins.
+    """
     proxy = _proxy(db)
     if proxy is None:
-        return {"ok": False, "message": "Supervisor not configured", **sync_info}
+        return {"ok": False, "message": "Supervisor not configured", "synced": False}
+
     program = get_setting(db, "supervisor_program", "valheim-server") or "valheim-server"
     try:
-        proxy.supervisor.stopProcess(program)
+        _stop_process(proxy, program)
+
+        # Bootstrap is oneshot (autorestart=false). Start it even if already EXITED.
+        try:
+            proxy.supervisor.startProcess(BOOTSTRAP_PROGRAM)
+        except xmlrpc.client.Fault as exc:
+            # If still RUNNING from a prior start, wait it out
+            if "ALREADY_STARTED" not in str(exc) and "ALREADYSTARTED" not in str(exc):
+                raise
+
+        bootstrap_state = _wait_bootstrap_exited(proxy)
+        if bootstrap_state == "FATAL":
+            return {
+                "ok": False,
+                "message": f"{BOOTSTRAP_PROGRAM} exited FATAL",
+                "synced": False,
+                "bootstrap": bootstrap_state,
+            }
+
         proxy.supervisor.startProcess(program)
         info = proxy.supervisor.getProcessInfo(program)
         return {
             "ok": True,
             "status": info.get("statename"),
-            "message": f"Synced plugins and restarted {program}",
-            **sync_info,
+            "message": f"Ran {BOOTSTRAP_PROGRAM} then started {program}",
+            "synced": True,
+            "bootstrap": bootstrap_state,
         }
     except Exception as exc:
-        logger.exception("Supervisor restart failed")
-        return {"ok": False, "message": _friendly_error(exc), **sync_info}
+        logger.exception("Supervisor restart/bootstrap failed")
+        return {"ok": False, "message": _friendly_error(exc), "synced": False}
 
 
 def get_tail_log(db: Session, bytes_count: int = 4096) -> str | None:

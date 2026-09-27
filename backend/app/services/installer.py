@@ -16,6 +16,7 @@ from ..config import Settings, get_settings
 from ..models import InstalledPackage, OwnedFile
 from .dll_meta import read_bepinex_plugin_metadata
 from .live_sync import (
+    ensure_persistent_symlink,
     merge_tree_into,
     path_is_under_live,
     remove_paths_from_live,
@@ -143,7 +144,8 @@ def _resolve_dest(
 ) -> tuple[Path, Path, bool]:
     """Return (dest_dir, files_root, live_only).
 
-    live_only packages install/update on the data plugins tree and never touch config.
+    Persistent packages install/update under config/bepinex/.persistent with a
+    plugins/ symlink; normal packages install under plugins/.
     """
     name = item.get("name") or item["full_name"]
     live_folder = resolve_live_only_folder(
@@ -153,9 +155,15 @@ def _resolve_dest(
         live_folder = Path(existing.install_path)
         if live_folder.is_file():
             live_folder = live_folder.parent
+        # Prefer the canonical .persistent folder name
+        if live_folder.parent != settings.persistent_dir:
+            candidate = settings.persistent_dir / item["full_name"]
+            if candidate.is_dir():
+                live_folder = candidate
 
-    if live_folder is not None and settings.live_plugins_root is not None:
-        return live_folder, settings.live_plugins_root, True
+    if live_folder is not None:
+        settings.persistent_dir.mkdir(parents=True, exist_ok=True)
+        return live_folder, settings.persistent_dir, True
 
     dest = settings.plugins_dir / item["full_name"]
     return dest, settings.plugins_dir, False
@@ -213,7 +221,7 @@ def preview_install(db: Session, source: str, full_name: str, version: str | Non
             )
         elif live_only:
             warnings.append(
-                f"{item['full_name']} updates on live plugins only (keeps runtime data)"
+                f"{item['full_name']} is persistent (.persistent + plugins symlink; keeps runtime data)"
             )
         if dest_dir.exists() and existing is None and not live_only:
             conflicts.append(f"Directory already exists without ownership record: {dest_dir.name}")
@@ -257,7 +265,7 @@ async def install_packages(
             ensure_within(files_root, dest_dir)
 
             if live_only:
-                # Merge package files into existing live tree; never wipe (preserves runtime data).
+                # Merge into .persistent; never wipe (preserves runtime data). Keep plugins symlink.
                 to_overwrite: list[Path] = []
                 if plugin_root.is_file():
                     to_overwrite.append(dest_dir / plugin_root.name)
@@ -267,8 +275,15 @@ async def install_packages(
                             to_overwrite.append(dest_dir / path.relative_to(plugin_root))
                 _backup_files(to_overwrite, item["full_name"], settings)
                 copied = merge_tree_into(plugin_root, dest_dir)
+                try:
+                    ensure_persistent_symlink(dest_dir.name, settings)
+                except FileExistsError:
+                    logger.warning(
+                        "Could not create plugins symlink for persistent package %s",
+                        dest_dir.name,
+                    )
                 logger.info(
-                    "Live-only update of %s → %s (%s files merged)",
+                    "Persistent update of %s → %s (%s files merged)",
                     item["full_name"],
                     dest_dir,
                     len(copied),
@@ -437,8 +452,8 @@ def _finalize_package_record(
 
 
 def _files_root_for_path(path: Path | str, settings: Settings) -> Path:
-    if path_is_under_live(path, settings) and settings.live_plugins_root is not None:
-        return settings.live_plugins_root
+    if path_is_under_live(path, settings):
+        return settings.persistent_dir
     return settings.plugins_dir
 
 
@@ -507,6 +522,13 @@ def install_from_zip_file(
                     to_overwrite.append(dest_dir / path.relative_to(plugin_root))
             _backup_files(to_overwrite, full_name, settings)
             copied = merge_tree_into(plugin_root, dest_dir)
+            try:
+                ensure_persistent_symlink(dest_dir.name, settings)
+            except FileExistsError:
+                logger.warning(
+                    "Could not create plugins symlink for persistent package %s",
+                    dest_dir.name,
+                )
         else:
             if dest_dir.exists():
                 backup_tmp = settings.backups_dir / "pre_install" / f"{full_name}-{stamp}"
@@ -614,11 +636,11 @@ def import_dll_file(
         )
         .first()
     )
-    # Prefer updating an existing live-only folder's DLL when matched
+    # Prefer updating an existing persistent folder's DLL when matched
     live_folder = resolve_live_only_folder(settings, full_name=full_name, name=name)
-    if live_folder is not None and settings.live_plugins_root is not None:
+    if live_folder is not None:
         dest = live_folder / f"{dll_path.stem}.dll"
-        files_root = settings.live_plugins_root
+        files_root = settings.persistent_dir
         live_only = True
     else:
         dest = settings.plugins_dir / f"{Path(full_name).name}.dll"
@@ -634,6 +656,11 @@ def import_dll_file(
         _backup_files([dest], dest.name, settings)
 
     shutil.copy2(dll_path, dest)
+    if live_only:
+        try:
+            ensure_persistent_symlink(live_folder.name if live_folder is not None else full_name, settings)
+        except FileExistsError:
+            pass
     rel = dest.relative_to(files_root).as_posix()
 
     existing = (
@@ -711,6 +738,7 @@ def uninstall_package(db: Session, package_id: int) -> None:
     live_only = path_is_under_live(pkg.install_path, settings)
     files_root = _files_root_for_path(pkg.install_path, settings)
     owned_rels = [owned.relative_path for owned in pkg.files]
+    package_folder_name = Path(pkg.install_path).name
 
     for owned in list(pkg.files):
         target = files_root / owned.relative_path
@@ -741,6 +769,13 @@ def uninstall_package(db: Session, package_id: int) -> None:
                 # If map_data remains, keep the folder
             except OSError:
                 pass
+            # Always remove the plugins symlink so bootstrap stops loading it
+            link = settings.plugins_dir / package_folder_name
+            try:
+                if link.is_symlink() or link.exists():
+                    link.unlink()
+            except OSError as exc:
+                logger.warning("Could not remove persistent plugins link %s: %s", link, exc)
         elif install.parent == settings.plugins_dir:
             shutil.rmtree(install, ignore_errors=True)
 
@@ -792,6 +827,57 @@ def set_enabled(db: Session, package_id: int, enabled: bool) -> InstalledPackage
         package=pkg.full_name,
         source=pkg.source,
         result="ok",
+    )
+    db.commit()
+    db.refresh(pkg)
+    return pkg
+
+
+def set_package_persistent(db: Session, package_id: int, persistent: bool) -> InstalledPackage:
+    """Move package between plugins/ and .persistent/ with a plugins symlink."""
+    from .live_sync import make_normal, make_persistent, path_is_persistent
+
+    settings = get_settings()
+    pkg = db.get(InstalledPackage, package_id)
+    if pkg is None:
+        raise ValueError("Package not found")
+
+    folder_name = Path(pkg.install_path).name
+    # Prefer the plugins entry name when install_path already points at .persistent
+    plugins_entry = settings.plugins_dir / folder_name
+    if plugins_entry.exists() or plugins_entry.is_symlink():
+        folder_name = plugins_entry.name
+    elif (settings.plugins_dir / pkg.full_name).exists() or (
+        settings.plugins_dir / pkg.full_name
+    ).is_symlink():
+        folder_name = pkg.full_name
+
+    already = path_is_persistent(pkg.install_path, settings) or path_is_persistent(
+        settings.plugins_dir / folder_name, settings
+    )
+    if persistent:
+        if already:
+            dest = settings.persistent_dir / folder_name
+        else:
+            dest = make_persistent(folder_name, settings)
+        pkg.install_path = str(dest)
+        message = f"Marked {pkg.full_name} persistent (.persistent + plugins symlink)"
+    else:
+        if not already:
+            dest = settings.plugins_dir / folder_name
+        else:
+            dest = make_normal(folder_name, settings)
+        pkg.install_path = str(dest)
+        message = f"Marked {pkg.full_name} normal (files in plugins/)"
+
+    set_setting(db, "restart_required", True)
+    log_activity(
+        db,
+        "persistent" if persistent else "normal",
+        package=pkg.full_name,
+        source=pkg.source,
+        result="ok",
+        message=message,
     )
     db.commit()
     db.refresh(pkg)

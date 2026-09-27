@@ -4,13 +4,13 @@ Self-hosted companion for an existing [lloesche/valheim-server](https://github.c
 
 ## How it fits the vanilla image
 
-With `BEPINEX=true`, lloesche keeps a persistent tree under `/config/bepinex` and syncs plugins/patchers into `/opt/valheim/bepinex/BepInEx/` on container start and on BepInEx install/update. The manager:
+With `BEPINEX=true`, lloesche keeps a persistent tree under `/config/bepinex` and syncs plugins/patchers into `/opt/valheim/bepinex/BepInEx/` during `valheim-bootstrap` (container start and BepInEx install/update). The manager:
 
 1. Writes installs to the **config** mount (`.../config/bepinex`)
-2. Mirrors those files into the **live** mounts (`.../data/bepinex/BepInEx/{plugins,patchers}`) before a Supervisor restart
-3. Restarts only the `valheim-server` Supervisor program — it does **not** re-bootstrap the container or change the Valheim image
+2. Applies changes by stopping `valheim-server`, running `valheim-bootstrap`, then starting `valheim-server` again — it does **not** bind-mount or write `data/bepinex`
+3. Leaves the Valheim image and world saves alone
 
-Plugins that exist only on live (not in config) are treated as live-only: updates merge in place and are never copied back into config.
+**Persistent packages** (bulky mods with many tiny files): use **Make persistent** on an installed row. Files move to `config/bepinex/.persistent/<package>` and `plugins/<package>` becomes a symlink to `/config/bepinex/.persistent/<package>`. Bootstrap's `rsync -a` copies that one symlink into the live tree without walking the files. Runtime data the mod writes follows the link and survives `data/bepinex` replaces.
 
 Do **not** copy this working folder as-is (`.venv`, `node_modules`, and `data/` are machine-local).
 
@@ -29,10 +29,10 @@ Edit `.env`:
 | Variable | Typical host path (lloesche) |
 |---|---|
 | `VALHEIM_BEPINEX_PATH` | `$HOME/valheim-server/config/bepinex` |
-| `VALHEIM_LIVE_PLUGINS_PATH` | `$HOME/valheim-server/data/bepinex/BepInEx/plugins` |
-| `VALHEIM_LIVE_PATCHERS_PATH` | `$HOME/valheim-server/data/bepinex/BepInEx/patchers` |
 | `VALHEIM_DOCKER_NETWORK` | Network of the Valheim container (`docker network ls`) |
 | `SUPERVISOR_URL` | `http://<valheim-container-name>:9001` |
+
+Do **not** mount `data/bepinex` or its `plugins`/`patchers` subfolders into the manager. Those binds pin the directory the Valheim image renames during BepInEx merge.
 
 2. On the Valheim container, enable Supervisor HTTP if you want restart control: `SUPERVISOR_HTTP=true` (and optionally `SUPERVISOR_HTTP_PASS`). Use that same password as `SUPERVISOR_PASSWORD` here — not a misnamed `SUPERVISOR_PASS`.
 
@@ -49,7 +49,7 @@ Docker builds the Python env and frontend inside the image. Persistent manager s
 
 ## Merge into the Valheim compose later
 
-Add a sibling service that mounts `./config/bepinex` and the live `BepInEx` plugin/patcher dirs, and talks to `http://valheim:9001` (or whatever your Valheim service/`--name` is). See `docker-compose.merge.example.yml`.
+Add a sibling service that mounts `./config/bepinex` (at both `/valheim/bepinex` and `/config/bepinex`) and talks to `http://valheim:9001` (or whatever your Valheim service/`--name` is). See `docker-compose.merge.example.yml`.
 
 ## Development
 

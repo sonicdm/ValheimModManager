@@ -118,7 +118,7 @@ export default function DashboardPage() {
               onClick={restart}
               className="rounded-md border border-ember/40 bg-ember/10 px-3 py-2 text-sm text-ember"
             >
-              Restart server
+              Restart + sync
             </button>
           )}
         </div>
@@ -126,7 +126,8 @@ export default function DashboardPage() {
 
       {stats.restart_required && (
         <div className="rounded-xl border border-ember/30 bg-ember/10 px-4 py-3 text-sm text-ember">
-          Plugin or config changes are waiting for a server restart.
+          Plugin or config changes are waiting. Restart + sync stops the game, runs valheim-bootstrap
+          (config → live), then starts the server again.
         </div>
       )}
       {error && <p className="text-sm text-danger">{error}</p>}

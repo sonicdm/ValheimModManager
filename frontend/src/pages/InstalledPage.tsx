@@ -139,7 +139,7 @@ export default function InstalledPage() {
                   <span className="rounded-full bg-mist px-2 py-0.5 text-xs">{pkg.source}</span>
                   {pkg.live_only && (
                     <span className="ml-1 rounded-full bg-sea/15 px-2 py-0.5 text-xs text-sea">
-                      live-only
+                      persistent
                     </span>
                   )}
                   {pkg.source === "local" && (
@@ -199,6 +199,25 @@ export default function InstalledPage() {
                       {pkg.source === "thunderstore" || pkg.source === "hexium"
                         ? "Change store"
                         : "Link store"}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busy === pkg.id}
+                      className="rounded border border-bark/15 px-2 py-1 text-xs"
+                      title={
+                        pkg.live_only
+                          ? "Move files back into plugins/ (bootstrap will copy every file)"
+                          : "Move files to .persistent/ and leave a symlink in plugins/ (bootstrap copies the link only)"
+                      }
+                      onClick={() =>
+                        act(pkg.id, () =>
+                          api.post(
+                            `/api/plugins/${pkg.id}/${pkg.live_only ? "normal" : "persistent"}`,
+                          ),
+                        )
+                      }
+                    >
+                      {pkg.live_only ? "Make normal" : "Make persistent"}
                     </button>
                     {pkg.managed && (
                       <button

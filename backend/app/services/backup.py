@@ -67,8 +67,8 @@ def create_backup(
         snap = _package_snapshot(pkg)
         inventory.append(snap)
         files_root = (
-            settings.live_plugins_root
-            if path_is_under_live(pkg.install_path, settings) and settings.live_plugins_root
+            settings.persistent_dir
+            if path_is_under_live(pkg.install_path, settings)
             else settings.plugins_dir
         )
         for owned in pkg.files:
@@ -141,8 +141,8 @@ def restore_backup(db: Session, backup_id: int) -> BackupRecord:
     for snap in inventory.get("packages") or []:
         install_hint = snap.get("install_path") or ""
         files_root = (
-            settings.live_plugins_root
-            if path_is_under_live(install_hint, settings) and settings.live_plugins_root
+            settings.persistent_dir
+            if path_is_under_live(install_hint, settings)
             else settings.plugins_dir
         )
         for fmeta in snap.get("files") or []:

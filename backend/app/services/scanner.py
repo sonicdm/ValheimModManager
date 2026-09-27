@@ -249,19 +249,26 @@ def scan_plugins(settings: Settings | None = None) -> list[ScannedPlugin]:
                 )
             )
 
-    # Live-only plugins (present under /opt/valheim live tree, absent from /config/bepinex)
-    live = settings.live_plugins_root
-    if live is not None and live.is_dir():
-        for name in sorted(live_only_plugin_names(settings), key=str.lower):
-            if name.lower() in seen_names:
-                continue
-            entry = live / name
-            if not entry.is_dir() or entry.is_symlink():
-                continue
-            scanned = _scan_folder(
-                entry, files_root=live, config_dir=config_dir, skip_runtime=True
-            )
-            results.append(scanned)
+    # Persistent packages: plugins/<name> is a symlink into .persistent
+    from .live_sync import is_persistent_link, persistent_package_names
+
+    for name in sorted(persistent_package_names(settings), key=str.lower):
+        if name.lower() in seen_names:
+            continue
+        link = settings.plugins_dir / name
+        if not is_persistent_link(link, settings):
+            continue
+        try:
+            entry = link.resolve()
+        except OSError:
+            entry = settings.persistent_dir / name
+        if not entry.is_dir():
+            continue
+        scanned = _scan_folder(
+            entry, files_root=settings.persistent_dir, config_dir=config_dir, skip_runtime=True
+        )
+        scanned.full_name = name
+        results.append(scanned)
 
     return results
 
@@ -336,8 +343,8 @@ def persist_scan(db: Session, settings: Settings | None = None) -> list[Installe
         if not pkg.files or pkg.source in ("local", "unmanaged"):
             pkg.files.clear()
             files_root = (
-                settings.live_plugins_root
-                if path_is_under_live(item.install_path, settings) and settings.live_plugins_root
+                settings.persistent_dir
+                if path_is_under_live(item.install_path, settings)
                 else settings.plugins_dir
             )
             for rel in item.files:
@@ -405,17 +412,9 @@ def persist_scan(db: Session, settings: Settings | None = None) -> list[Installe
 
 def detect_drift(settings: Settings | None = None) -> list[str]:
     settings = settings or get_settings()
-    live = settings.live_plugins_root
-    config_plugins = settings.plugins_dir
-    if live is None or not live.is_dir() or not config_plugins.is_dir():
-        return []
-    config_names = {p.name for p in config_plugins.iterdir() if not p.name.startswith(".")}
-    only_config = sorted(config_names - {p.name for p in live.iterdir() if not p.name.startswith(".")})
-    live_only = sorted(live_only_plugin_names(settings))
     messages = []
-    for name in only_config:
-        messages.append(f"Present in config but missing from live plugins: {name}")
-    for name in live_only:
-        # Informational — live-only is intentional (large/runtime trees stay on data)
-        messages.append(f"Live-only plugin (not in config; updates in place): {name}")
+    for name in sorted(live_only_plugin_names(settings)):
+        messages.append(
+            f"Persistent package (symlink in plugins → .persistent/{name}; bootstrap copies the link only)"
+        )
     return messages
