@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from ..config import get_settings
 from ..models import BackupRecord, ConfigAssociation, InstalledPackage, OwnedFile
+from .live_sync import path_is_under_live
 from .paths import ensure_within
 from .settings_service import log_activity
 
@@ -65,12 +66,17 @@ def create_backup(
     for pkg in packages:
         snap = _package_snapshot(pkg)
         inventory.append(snap)
+        files_root = (
+            settings.live_plugins_root
+            if path_is_under_live(pkg.install_path, settings) and settings.live_plugins_root
+            else settings.plugins_dir
+        )
         for owned in pkg.files:
-            src = settings.plugins_dir / owned.relative_path
+            src = files_root / owned.relative_path
             if not src.is_file():
                 continue
             try:
-                ensure_within(settings.plugins_dir, src)
+                ensure_within(files_root, src)
             except Exception:
                 continue
             dest = plugins_out / owned.relative_path
@@ -133,12 +139,18 @@ def restore_backup(db: Session, backup_id: int) -> BackupRecord:
     inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
 
     for snap in inventory.get("packages") or []:
+        install_hint = snap.get("install_path") or ""
+        files_root = (
+            settings.live_plugins_root
+            if path_is_under_live(install_hint, settings) and settings.live_plugins_root
+            else settings.plugins_dir
+        )
         for fmeta in snap.get("files") or []:
             rel = fmeta["relative_path"]
             src = backup_root / "plugins" / rel
             if not src.is_file():
                 continue
-            dest = settings.plugins_dir / rel
+            dest = files_root / rel
             # Skip if dest exists, differs from backup, and was modified after backup
             if dest.is_file() and record.created_at:
                 dest_mtime = datetime.fromtimestamp(dest.stat().st_mtime, tz=timezone.utc)
@@ -160,7 +172,7 @@ def restore_backup(db: Session, backup_id: int) -> BackupRecord:
                     # Unrelated change after backup — do not overwrite
                     continue
             dest.parent.mkdir(parents=True, exist_ok=True)
-            ensure_within(settings.plugins_dir, dest.parent)
+            ensure_within(files_root, dest.parent)
             shutil.copy2(src, dest)
 
         for cfg_name in snap.get("configs") or []:

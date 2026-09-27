@@ -11,7 +11,11 @@ from sqlalchemy.orm import Session
 from ..config import Settings, get_settings
 from ..models import ConfigAssociation, InstalledPackage, OwnedFile
 from .dll_meta import read_bepinex_plugin_metadata
+from .live_sync import live_only_plugin_names, path_is_under_live
 from .settings_service import log_activity, set_setting
+
+# Generated / runtime trees inside live-only plugins — skip for ownership inventory.
+_RUNTIME_DIR_NAMES = frozenset({"map_data", "cache", "logs", ".git", "__pycache__"})
 
 
 @dataclass
@@ -89,12 +93,84 @@ def _find_configs(config_dir: Path, guid: str | None, name: str | None) -> list[
     return sorted(set(matches))
 
 
-def _collect_files(folder: Path, root: Path) -> list[str]:
+def _collect_files(folder: Path, root: Path, *, skip_runtime: bool = False) -> list[str]:
     files: list[str] = []
     for path in folder.rglob("*"):
-        if path.is_file() and not path.is_symlink():
-            files.append(_rel(root, path))
+        if not path.is_file() or path.is_symlink():
+            continue
+        if skip_runtime:
+            try:
+                parts = path.relative_to(folder).parts
+            except ValueError:
+                continue
+            if any(part.lower() in _RUNTIME_DIR_NAMES for part in parts):
+                continue
+        files.append(_rel(root, path))
     return sorted(files)
+
+
+def _scan_folder(
+    entry: Path,
+    *,
+    files_root: Path,
+    config_dir: Path,
+    skip_runtime: bool = False,
+) -> ScannedPlugin:
+    manifest = _load_manifest(entry)
+    files = _collect_files(entry, files_root, skip_runtime=skip_runtime)
+    dlls = [
+        d
+        for d in entry.rglob("*.dll")
+        if not any(part.lower() in _RUNTIME_DIR_NAMES for part in d.relative_to(entry).parts)
+    ]
+    guid = name = version = None
+    for dll in dlls:
+        if dll.name.endswith(".dll.disabled"):
+            continue
+        m = read_bepinex_plugin_metadata(str(dll))
+        if m.guid or m.name:
+            guid, name, version = m.guid, m.name, m.version
+            break
+
+    enabled = True
+    disabled_dlls = [d for d in entry.rglob("*.dll.disabled")]
+    active_dlls = [d for d in dlls if not d.name.endswith(".dll.disabled")]
+    if disabled_dlls and not active_dlls:
+        enabled = False
+
+    if manifest:
+        owner = None
+        full_name = entry.name
+        if "-" in entry.name:
+            owner = entry.name.split("-", 1)[0]
+        return ScannedPlugin(
+            name=manifest.get("name") or entry.name,
+            full_name=full_name if owner else (manifest.get("name") or entry.name),
+            version=manifest.get("version_number") or version,
+            owner=owner or manifest.get("author"),
+            plugin_guid=guid,
+            install_path=str(entry),
+            managed=True,
+            enabled=enabled,
+            source="local",
+            description=manifest.get("description"),
+            dependencies=list(manifest.get("dependencies") or []),
+            files=files,
+            config_files=_find_configs(config_dir, guid, manifest.get("name") or name),
+        )
+    return ScannedPlugin(
+        name=name or entry.name,
+        full_name=entry.name,
+        version=version,
+        owner=None,
+        plugin_guid=guid,
+        install_path=str(entry),
+        managed=False,
+        enabled=enabled,
+        source="unmanaged",
+        files=files,
+        config_files=_find_configs(config_dir, guid, name),
+    )
 
 
 def scan_plugins(settings: Settings | None = None) -> list[ScannedPlugin]:
@@ -103,130 +179,89 @@ def scan_plugins(settings: Settings | None = None) -> list[ScannedPlugin]:
     config_dir = settings.config_dir
     results: list[ScannedPlugin] = []
     if not plugins_dir.is_dir():
-        return results
+        # Still scan live-only below if config mount is missing
+        plugins_dir_ok = False
+    else:
+        plugins_dir_ok = True
 
     seen_files: set[str] = set()
+    seen_names: set[str] = set()
 
-    # Package folders first
-    for entry in sorted(plugins_dir.iterdir(), key=lambda p: p.name.lower()):
-        if not entry.is_dir() or entry.is_symlink():
-            continue
-        manifest = _load_manifest(entry)
-        files = _collect_files(entry, plugins_dir)
-        seen_files.update(files)
-        dlls = list(entry.rglob("*.dll"))
-        guid = name = version = None
-        for dll in dlls:
-            if dll.name.endswith(".dll.disabled"):
+    if plugins_dir_ok:
+        for entry in sorted(plugins_dir.iterdir(), key=lambda p: p.name.lower()):
+            if not entry.is_dir() or entry.is_symlink():
+                continue
+            scanned = _scan_folder(entry, files_root=plugins_dir, config_dir=config_dir)
+            seen_files.update(scanned.files)
+            seen_names.add(entry.name.lower())
+            results.append(scanned)
+
+        folder_names = {r.name.lower().replace(" ", "") for r in results}
+        folder_guids = {r.plugin_guid.lower() for r in results if r.plugin_guid}
+        for dll in sorted(plugins_dir.glob("*.dll")):
+            if dll.is_symlink():
+                continue
+            rel = _rel(plugins_dir, dll)
+            if rel in seen_files:
                 continue
             m = read_bepinex_plugin_metadata(str(dll))
-            if m.guid or m.name:
-                guid, name, version = m.guid, m.name, m.version
-                break
-
-        enabled = True
-        disabled_dlls = list(entry.rglob("*.dll.disabled"))
-        active_dlls = list(entry.rglob("*.dll"))
-        if disabled_dlls and not active_dlls:
-            enabled = False
-
-        if manifest:
-            owner = None
-            full_name = entry.name
-            # Prefer folder naming Team-Mod
-            if "-" in entry.name:
-                parts = entry.name.split("-", 1)
-                owner = parts[0]
+            if m.guid and m.guid.lower() in folder_guids:
+                continue
+            if (m.name or dll.stem).lower().replace(" ", "") in folder_names:
+                continue
             results.append(
                 ScannedPlugin(
-                    name=manifest.get("name") or entry.name,
-                    full_name=full_name if owner else (manifest.get("name") or entry.name),
-                    version=manifest.get("version_number") or version,
-                    owner=owner or manifest.get("author"),
-                    plugin_guid=guid,
-                    install_path=str(entry),
-                    managed=True,
-                    enabled=enabled,
-                    source="local",
-                    description=manifest.get("description"),
-                    dependencies=list(manifest.get("dependencies") or []),
-                    files=files,
-                    config_files=_find_configs(config_dir, guid, manifest.get("name") or name),
-                )
-            )
-        else:
-            results.append(
-                ScannedPlugin(
-                    name=name or entry.name,
-                    full_name=entry.name,
-                    version=version,
+                    name=m.name or dll.stem,
+                    full_name=dll.stem,
+                    version=m.version,
                     owner=None,
-                    plugin_guid=guid,
-                    install_path=str(entry),
+                    plugin_guid=m.guid,
+                    install_path=str(dll),
                     managed=False,
-                    enabled=enabled,
+                    enabled=True,
                     source="unmanaged",
-                    files=files,
-                    config_files=_find_configs(config_dir, guid, name),
+                    files=[rel],
+                    config_files=_find_configs(config_dir, m.guid, m.name or dll.stem),
                 )
             )
 
-    # Loose DLLs at plugins root
-    folder_names = {r.name.lower().replace(" ", "") for r in results}
-    folder_guids = {r.plugin_guid.lower() for r in results if r.plugin_guid}
-    for dll in sorted(plugins_dir.glob("*.dll")):
-        if dll.is_symlink():
-            continue
-        rel = _rel(plugins_dir, dll)
-        if rel in seen_files:
-            continue
-        m = read_bepinex_plugin_metadata(str(dll))
-        # Skip loose copies that duplicate a package folder already inventoried
-        if m.guid and m.guid.lower() in folder_guids:
-            continue
-        if (m.name or dll.stem).lower().replace(" ", "") in folder_names:
-            continue
-        enabled = True
-        results.append(
-            ScannedPlugin(
-                name=m.name or dll.stem,
-                full_name=dll.stem,
-                version=m.version,
-                owner=None,
-                plugin_guid=m.guid,
-                install_path=str(dll),
-                managed=False,
-                enabled=enabled,
-                source="unmanaged",
-                files=[rel],
-                config_files=_find_configs(config_dir, m.guid, m.name or dll.stem),
+        for disabled in sorted(plugins_dir.glob("*.dll.disabled")):
+            if disabled.is_symlink():
+                continue
+            rel = _rel(plugins_dir, disabled)
+            active_name = disabled.name[: -len(".disabled")]
+            if (plugins_dir / active_name).exists():
+                continue
+            m = read_bepinex_plugin_metadata(str(disabled))
+            results.append(
+                ScannedPlugin(
+                    name=m.name or Path(active_name).stem,
+                    full_name=Path(active_name).stem,
+                    version=m.version,
+                    owner=None,
+                    plugin_guid=m.guid,
+                    install_path=str(disabled),
+                    managed=False,
+                    enabled=False,
+                    source="unmanaged",
+                    files=[rel],
+                    config_files=_find_configs(config_dir, m.guid, m.name),
+                )
             )
-        )
 
-    for disabled in sorted(plugins_dir.glob("*.dll.disabled")):
-        if disabled.is_symlink():
-            continue
-        rel = _rel(plugins_dir, disabled)
-        active_name = disabled.name[: -len(".disabled")]
-        # Skip if active counterpart exists
-        if (plugins_dir / active_name).exists():
-            continue
-        m = read_bepinex_plugin_metadata(str(disabled))
-        results.append(
-            ScannedPlugin(
-                name=m.name or Path(active_name).stem,
-                full_name=Path(active_name).stem,
-                version=m.version,
-                owner=None,
-                plugin_guid=m.guid,
-                install_path=str(disabled),
-                managed=False,
-                enabled=False,
-                source="unmanaged",
-                files=[rel],
-                config_files=_find_configs(config_dir, m.guid, m.name),
+    # Live-only plugins (present on data, absent from config) — e.g. WebMap
+    live = settings.live_plugins_root
+    if live is not None and live.is_dir():
+        for name in sorted(live_only_plugin_names(settings), key=str.lower):
+            if name.lower() in seen_names:
+                continue
+            entry = live / name
+            if not entry.is_dir() or entry.is_symlink():
+                continue
+            scanned = _scan_folder(
+                entry, files_root=live, config_dir=config_dir, skip_runtime=True
             )
-        )
+            results.append(scanned)
 
     return results
 
@@ -300,8 +335,13 @@ def persist_scan(db: Session, settings: Settings | None = None) -> list[Installe
         # Refresh owned files for unmanaged/local; keep managed ownership if already tracked
         if not pkg.files or pkg.source in ("local", "unmanaged"):
             pkg.files.clear()
+            files_root = (
+                settings.live_plugins_root
+                if path_is_under_live(item.install_path, settings) and settings.live_plugins_root
+                else settings.plugins_dir
+            )
             for rel in item.files:
-                full = settings.plugins_dir / rel
+                full = files_root / rel
                 sha = _file_sha256(full) if full.is_file() else None
                 size = full.stat().st_size if full.is_file() else None
                 pkg.files.append(OwnedFile(relative_path=rel, sha256=sha, size=size))
@@ -369,13 +409,13 @@ def detect_drift(settings: Settings | None = None) -> list[str]:
     config_plugins = settings.plugins_dir
     if live is None or not live.is_dir() or not config_plugins.is_dir():
         return []
-    config_names = {p.name for p in config_plugins.iterdir()}
-    live_names = {p.name for p in live.iterdir()}
-    only_config = sorted(config_names - live_names)
-    only_live = sorted(live_names - config_names)
+    config_names = {p.name for p in config_plugins.iterdir() if not p.name.startswith(".")}
+    only_config = sorted(config_names - {p.name for p in live.iterdir() if not p.name.startswith(".")})
+    live_only = sorted(live_only_plugin_names(settings))
     messages = []
     for name in only_config:
         messages.append(f"Present in config but missing from live plugins: {name}")
-    for name in only_live:
-        messages.append(f"Present in live plugins but missing from config: {name}")
+    for name in live_only:
+        # Informational — live-only is intentional (large/runtime trees stay on data)
+        messages.append(f"Live-only plugin (not in config; updates in place): {name}")
     return messages

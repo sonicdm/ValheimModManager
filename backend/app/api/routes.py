@@ -67,6 +67,10 @@ def _pkg_out(pkg: InstalledPackage, pending_map: dict[str, str] | None = None) -
         deps = json.loads(pkg.dependencies_json or "[]")
     except json.JSONDecodeError:
         deps = []
+    from ..config import get_settings
+    from ..services.live_sync import path_is_under_live
+
+    settings = get_settings()
     return InstalledPackageOut(
         id=pkg.id,
         source=pkg.source,
@@ -88,6 +92,7 @@ def _pkg_out(pkg: InstalledPackage, pending_map: dict[str, str] | None = None) -
         owned_files=[f.relative_path for f in pkg.files],
         update_available=pending_map.get(f"{pkg.source}:{pkg.full_name}"),
         last_scanned_at=pkg.last_scanned_at,
+        live_only=path_is_under_live(pkg.install_path, settings),
     )
 
 

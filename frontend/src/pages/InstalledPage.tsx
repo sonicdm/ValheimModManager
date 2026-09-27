@@ -137,6 +137,11 @@ export default function InstalledPage() {
                 <td className="px-4 py-3">{pkg.version || "—"}</td>
                 <td className="px-4 py-3">
                   <span className="rounded-full bg-mist px-2 py-0.5 text-xs">{pkg.source}</span>
+                  {pkg.live_only && (
+                    <span className="ml-1 rounded-full bg-sea/15 px-2 py-0.5 text-xs text-sea">
+                      live-only
+                    </span>
+                  )}
                   {pkg.source === "local" && (
                     <span className="ml-1 rounded-full bg-sea/15 px-2 py-0.5 text-xs text-sea">
                       not linked

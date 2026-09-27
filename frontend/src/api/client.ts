@@ -123,6 +123,7 @@ export type InstalledPackage = {
   config_files: string[];
   owned_files: string[];
   update_available?: string | null;
+  live_only?: boolean;
 };
 
 export type Package = {

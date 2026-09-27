@@ -51,6 +51,7 @@ class InstalledPackageOut(BaseModel):
     owned_files: list[str] = []
     update_available: str | None = None
     last_scanned_at: datetime | None = None
+    live_only: bool = False
 
     model_config = {"from_attributes": True}
 

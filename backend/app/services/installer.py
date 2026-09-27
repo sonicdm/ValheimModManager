@@ -12,15 +12,24 @@ from typing import Any
 import httpx
 from sqlalchemy.orm import Session
 
-from ..config import get_settings
-from ..models import ConfigAssociation, InstalledPackage, OwnedFile
+from ..config import Settings, get_settings
+from ..models import InstalledPackage, OwnedFile
 from .dll_meta import read_bepinex_plugin_metadata
-from .live_sync import remove_paths_from_live, sync_config_tree_to_live
+from .live_sync import (
+    merge_tree_into,
+    path_is_under_live,
+    remove_paths_from_live,
+    resolve_live_only_folder,
+    sync_config_tree_to_live,
+)
 from .paths import PathEscapeError, ensure_within, validate_archive_member
 from .settings_service import log_activity, set_setting
 from .packages import get_package, match_installed_to_remote, resolve_dependencies
 
 logger = logging.getLogger(__name__)
+
+# Runtime / generated trees inside live-only plugins — never treat as package-owned.
+_RUNTIME_DIR_NAMES = frozenset({"map_data", "cache", "logs", ".git", "__pycache__"})
 
 
 def _sha256(path: Path) -> str:
@@ -29,6 +38,10 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: f.read(65536), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def _stamp() -> str:
+    return datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
 
 
 async def download_package(url: str, dest: Path) -> Path:
@@ -49,7 +62,6 @@ def _safe_extract(zip_path: Path, dest: Path) -> list[Path]:
         for info in zf.infolist():
             name = info.filename
             if not name or name.endswith("/"):
-                # create directory safely
                 if name:
                     target_dir = validate_archive_member(name.rstrip("/"), dest)
                     target_dir.mkdir(parents=True, exist_ok=True)
@@ -58,7 +70,6 @@ def _safe_extract(zip_path: Path, dest: Path) -> list[Path]:
             if info.is_dir():
                 target.mkdir(parents=True, exist_ok=True)
                 continue
-            # Reject symlink-like external attrs on unix (bit 0o120000)
             if (info.external_attr >> 16) & 0o170000 == 0o120000:
                 raise PathEscapeError(f"Refusing to extract symlink: {name}")
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -69,16 +80,12 @@ def _safe_extract(zip_path: Path, dest: Path) -> list[Path]:
 
 
 def _detect_plugin_root(stage: Path) -> Path:
-    """Find the directory that should be copied into BepInEx/plugins."""
-    # Prefer a folder containing dlls or manifest.json
     if (stage / "manifest.json").is_file() or any(stage.glob("*.dll")):
         return stage
-    # plugins/ nested
     if (stage / "plugins").is_dir():
         return stage / "plugins"
     if (stage / "BepInEx" / "plugins").is_dir():
         return stage / "BepInEx" / "plugins"
-    # Single subdirectory
     subdirs = [p for p in stage.iterdir() if p.is_dir()]
     if len(subdirs) == 1:
         return _detect_plugin_root(subdirs[0])
@@ -94,7 +101,6 @@ def _detect_patchers(stage: Path) -> Path | None:
 
 
 def _copy_tree(src: Path, dest: Path) -> list[tuple[str, Path]]:
-    """Copy files from src into dest; return list of (relative_to_dest_parent, full path)."""
     copied: list[tuple[str, Path]] = []
     dest.mkdir(parents=True, exist_ok=True)
     if src.is_file():
@@ -114,24 +120,103 @@ def _copy_tree(src: Path, dest: Path) -> list[tuple[str, Path]]:
     return copied
 
 
+def _backup_files(files: list[Path], label: str, settings: Settings) -> Path | None:
+    existing = [p for p in files if p.exists() and p.is_file()]
+    if not existing:
+        return None
+    backup_tmp = settings.backups_dir / "pre_install" / f"{label}-{_stamp()}"
+    backup_tmp.mkdir(parents=True, exist_ok=True)
+    for path in existing:
+        try:
+            dest = backup_tmp / path.name
+            # Preserve relative structure when under a common parent
+            shutil.copy2(path, dest)
+        except OSError as exc:
+            logger.warning("Backup skip %s: %s", path, exc)
+    return backup_tmp
+
+
+def _resolve_dest(
+    settings: Settings,
+    item: dict[str, Any],
+    existing: InstalledPackage | None,
+) -> tuple[Path, Path, bool]:
+    """Return (dest_dir, files_root, live_only).
+
+    live_only packages install/update on the data plugins tree and never touch config.
+    """
+    name = item.get("name") or item["full_name"]
+    live_folder = resolve_live_only_folder(
+        settings, full_name=item["full_name"], name=name
+    )
+    if live_folder is None and existing and path_is_under_live(existing.install_path, settings):
+        live_folder = Path(existing.install_path)
+        if live_folder.is_file():
+            live_folder = live_folder.parent
+
+    if live_folder is not None and settings.live_plugins_root is not None:
+        return live_folder, settings.live_plugins_root, True
+
+    dest = settings.plugins_dir / item["full_name"]
+    return dest, settings.plugins_dir, False
+
+
+def _normalize_copied(
+    copied: list[tuple[str, Path]],
+    files_root: Path,
+    folder_name: str,
+) -> list[tuple[str, Path]]:
+    normalized: list[tuple[str, Path]] = []
+    for rel, full in copied:
+        try:
+            normalized.append((full.relative_to(files_root).as_posix(), full))
+        except ValueError:
+            normalized.append((f"{folder_name}/{rel}", full))
+    return normalized
+
+
+def _pick_plugin_root(plugin_root: Path, stage: Path, item: dict[str, Any]) -> Path:
+    if plugin_root == stage or plugin_root.name == "plugins":
+        if plugin_root.name == "plugins":
+            match = None
+            for child in plugin_root.iterdir():
+                if child.is_dir() and (
+                    child.name == item["full_name"] or child.name == item.get("name")
+                ):
+                    match = child
+                    break
+            if match is None:
+                children = [c for c in plugin_root.iterdir() if c.is_dir()]
+                if len(children) == 1:
+                    match = children[0]
+            if match:
+                return match
+    return plugin_root
+
+
 def preview_install(db: Session, source: str, full_name: str, version: str | None = None) -> dict[str, Any]:
     plan = resolve_dependencies(db, source, full_name, version)
     conflicts: list[str] = []
     warnings: list[str] = []
     settings = get_settings()
     for item in plan:
-        folder = settings.plugins_dir / item["full_name"]
         existing = (
             db.query(InstalledPackage)
             .filter(InstalledPackage.full_name == item["full_name"])
             .first()
         )
+        dest_dir, _, live_only = _resolve_dest(settings, item, existing)
         if existing and existing.version and existing.version != item["version"]:
             warnings.append(
                 f"{item['full_name']} will be upgraded from {existing.version} to {item['version']}"
+                + (" (live-only, in place)" if live_only else "")
             )
-        if folder.exists() and existing is None:
-            conflicts.append(f"Directory already exists without ownership record: {folder.name}")
+        elif live_only:
+            warnings.append(
+                f"{item['full_name']} updates on live plugins only (keeps runtime data)"
+            )
+        if dest_dir.exists() and existing is None and not live_only:
+            conflicts.append(f"Directory already exists without ownership record: {dest_dir.name}")
     return {"packages": plan, "conflicts": conflicts, "warnings": warnings}
 
 
@@ -153,7 +238,6 @@ async def install_packages(
             .filter(InstalledPackage.full_name == item["full_name"])
             .first()
         )
-        # Skip if already at target version and managed
         if existing and existing.managed and existing.version == item["version"] and existing.enabled:
             installed.append(existing)
             continue
@@ -168,50 +252,41 @@ async def install_packages(
         stage.mkdir(parents=True)
         try:
             _safe_extract(zip_path, stage)
-            plugin_root = _detect_plugin_root(stage)
-            dest_dir = settings.plugins_dir / item["full_name"]
-            # Backup existing destination into data backups staging
-            if dest_dir.exists():
-                backup_tmp = settings.backups_dir / "pre_install" / f"{item['full_name']}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
-                backup_tmp.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copytree(dest_dir, backup_tmp)
-                shutil.rmtree(dest_dir)
+            plugin_root = _pick_plugin_root(_detect_plugin_root(stage), stage, item)
+            dest_dir, files_root, live_only = _resolve_dest(settings, item, existing)
+            ensure_within(files_root, dest_dir)
 
-            dest_dir.mkdir(parents=True, exist_ok=True)
-            ensure_within(settings.plugins_dir, dest_dir)
-
-            # If plugin_root is stage itself with mixed content, copy contents into Team-Mod folder
-            if plugin_root == stage or plugin_root.name == "plugins":
-                # If plugins/ contains Team-Mod subfolders, prefer matching folder
-                match = None
-                if plugin_root.name == "plugins":
-                    for child in plugin_root.iterdir():
-                        if child.is_dir() and (
-                            child.name == item["full_name"] or child.name == item["name"]
-                        ):
-                            match = child
-                            break
-                    if match is None and len(list(plugin_root.iterdir())) == 1:
-                        only = next(plugin_root.iterdir())
-                        if only.is_dir():
-                            match = only
-                    if match:
-                        plugin_root = match
-                    else:
-                        # copy all plugin files into dest
-                        pass
-
-                if (plugin_root / "manifest.json").is_file() or any(plugin_root.glob("*.dll")):
-                    copied = _copy_tree(plugin_root, dest_dir)
+            if live_only:
+                # Merge package files into existing live tree; never wipe (preserves map_data).
+                to_overwrite: list[Path] = []
+                if plugin_root.is_file():
+                    to_overwrite.append(dest_dir / plugin_root.name)
                 else:
-                    copied = _copy_tree(plugin_root, dest_dir)
+                    for path in plugin_root.rglob("*"):
+                        if path.is_file():
+                            to_overwrite.append(dest_dir / path.relative_to(plugin_root))
+                _backup_files(to_overwrite, item["full_name"], settings)
+                copied = merge_tree_into(plugin_root, dest_dir)
+                logger.info(
+                    "Live-only update of %s → %s (%s files merged)",
+                    item["full_name"],
+                    dest_dir,
+                    len(copied),
+                )
             else:
+                if dest_dir.exists():
+                    backup_tmp = (
+                        settings.backups_dir / "pre_install" / f"{item['full_name']}-{_stamp()}"
+                    )
+                    backup_tmp.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copytree(dest_dir, backup_tmp)
+                    shutil.rmtree(dest_dir)
+                dest_dir.mkdir(parents=True, exist_ok=True)
                 copied = _copy_tree(plugin_root, dest_dir)
 
-            # Patchers
-            patchers = _detect_patchers(stage)
             patcher_files: list[tuple[str, Path]] = []
-            if patchers:
+            patchers = _detect_patchers(stage)
+            if patchers and not live_only:
                 for path in patchers.rglob("*"):
                     if path.is_file():
                         rel = path.relative_to(patchers).as_posix()
@@ -221,16 +296,9 @@ async def install_packages(
                         shutil.copy2(path, target)
                         patcher_files.append((f"../patchers/{rel}", target))
 
-            owned_rels: list[str] = []
-            for rel, full in copied:
-                owned_rels.append(f"{item['full_name']}/{rel}" if not rel.startswith(item["full_name"]) else rel)
-                # Normalize: paths relative to plugins_dir
-            normalized: list[tuple[str, Path]] = []
-            for rel, full in copied:
-                try:
-                    normalized.append((full.relative_to(settings.plugins_dir).as_posix(), full))
-                except ValueError:
-                    normalized.append((rel, full))
+            normalized = _normalize_copied(copied, files_root, dest_dir.name)
+            for rel, full in patcher_files:
+                normalized.append((rel, full))
 
             if existing is None:
                 existing = InstalledPackage(
@@ -276,7 +344,10 @@ async def install_packages(
                 package=item["full_name"],
                 source=item["source"],
                 result="ok",
-                message=f"Installed {item['full_name']} {item['version']}",
+                message=(
+                    f"{'Updated live-only' if live_only else 'Installed'} "
+                    f"{item['full_name']} {item['version']}"
+                ),
             )
             installed.append(existing)
         finally:
@@ -284,7 +355,15 @@ async def install_packages(
                 shutil.rmtree(stage, ignore_errors=True)
 
     set_setting(db, "restart_required", True)
-    sync_config_tree_to_live()
+    # Config→live only for config-managed installs; live-only already updated in place.
+    owned: list[str] = []
+    for pkg in installed:
+        if path_is_under_live(pkg.install_path, settings):
+            continue
+        owned.extend(f.relative_path for f in pkg.files)
+        owned.append(pkg.full_name)
+    if owned:
+        sync_config_tree_to_live(only_relative_paths=owned)
     db.commit()
     for pkg in installed:
         db.refresh(pkg)
@@ -357,16 +436,22 @@ def _finalize_package_record(
     return existing
 
 
+def _files_root_for_path(path: Path | str, settings: Settings) -> Path:
+    if path_is_under_live(path, settings) and settings.live_plugins_root is not None:
+        return settings.live_plugins_root
+    return settings.plugins_dir
+
+
 def install_from_zip_file(
     db: Session,
     zip_path: Path,
     *,
     full_name_override: str | None = None,
 ) -> InstalledPackage:
-    """Install a manually uploaded Thunderstore-style (or plain) zip into plugins/."""
+    """Install a manually uploaded Thunderstore-style zip into config (or live if already live-only)."""
     settings = get_settings()
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
-    stage = settings.staging_dir / f"manual-import-{stamp}"
+    stamp = _stamp()
+    stage = settings.staging_dir / f"import-{stamp}"
     if stage.exists():
         shutil.rmtree(stage)
     stage.mkdir(parents=True)
@@ -386,7 +471,6 @@ def install_from_zip_file(
         description = manifest.get("description")
         owner = manifest.get("author")
 
-        # Prefer Team-Mod folder naming when present
         if full_name_override:
             full_name = full_name_override.strip()
         elif "-" in plugin_root.name and plugin_root != stage:
@@ -398,7 +482,6 @@ def install_from_zip_file(
         else:
             full_name = name.replace(" ", "")
 
-        # DLL metadata
         guid = None
         for dll in plugin_root.rglob("*.dll"):
             meta = read_bepinex_plugin_metadata(str(dll))
@@ -410,22 +493,31 @@ def install_from_zip_file(
                     name = meta.name
                 break
 
-        dest_dir = settings.plugins_dir / full_name
-        ensure_within(settings.plugins_dir, dest_dir)
-        if dest_dir.exists():
-            backup_tmp = (
-                settings.backups_dir
-                / "pre_install"
-                / f"{full_name}-{stamp}"
-            )
-            backup_tmp.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copytree(dest_dir, backup_tmp)
-            shutil.rmtree(dest_dir)
-        dest_dir.mkdir(parents=True, exist_ok=True)
+        item = {"full_name": full_name, "name": name}
+        existing = (
+            db.query(InstalledPackage).filter(InstalledPackage.full_name == full_name).first()
+        )
+        dest_dir, files_root, live_only = _resolve_dest(settings, item, existing)
+        ensure_within(files_root, dest_dir)
 
-        copied = _copy_tree(plugin_root, dest_dir)
+        if live_only:
+            to_overwrite: list[Path] = []
+            for path in plugin_root.rglob("*"):
+                if path.is_file():
+                    to_overwrite.append(dest_dir / path.relative_to(plugin_root))
+            _backup_files(to_overwrite, full_name, settings)
+            copied = merge_tree_into(plugin_root, dest_dir)
+        else:
+            if dest_dir.exists():
+                backup_tmp = settings.backups_dir / "pre_install" / f"{full_name}-{stamp}"
+                backup_tmp.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copytree(dest_dir, backup_tmp)
+                shutil.rmtree(dest_dir)
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            copied = _copy_tree(plugin_root, dest_dir)
+
         patchers = _detect_patchers(stage)
-        if patchers:
+        if patchers and not live_only:
             for path in patchers.rglob("*"):
                 if path.is_file():
                     rel = path.relative_to(patchers).as_posix()
@@ -434,18 +526,9 @@ def install_from_zip_file(
                     target.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(path, target)
 
-        normalized: list[tuple[str, Path]] = []
-        for rel, full in copied:
-            try:
-                normalized.append((full.relative_to(settings.plugins_dir).as_posix(), full))
-            except ValueError:
-                normalized.append((f"{full_name}/{rel}", full))
+        normalized = _normalize_copied(copied, files_root, dest_dir.name)
 
-        existing = (
-            db.query(InstalledPackage).filter(InstalledPackage.full_name == full_name).first()
-        )
         source = "manual"
-        # Auto-link to a store if we can
         matched = match_installed_to_remote(
             db, full_name=full_name, name=name, owner=owner, version=version
         )
@@ -483,10 +566,15 @@ def install_from_zip_file(
             package=full_name,
             source=source,
             result="ok",
-            message=f"Imported zip as {full_name}" + (f" {version}" if version else ""),
+            message=(
+                f"Imported zip as {full_name}"
+                + (f" {version}" if version else "")
+                + (" (live-only merge)" if live_only else "")
+            ),
         )
         set_setting(db, "restart_required", True)
-        sync_config_tree_to_live()
+        if not live_only:
+            sync_config_tree_to_live(only_relative_paths=[f.relative_path for f in pkg.files] + [full_name])
         db.commit()
         db.refresh(pkg)
         return pkg
@@ -514,30 +602,39 @@ def import_dll_file(
     if not full_name:
         raise ValueError("Package name is required")
 
-    # Disallow path tricks in the chosen name
     if "/" in full_name or "\\" in full_name or full_name in (".", ".."):
         raise ValueError("Invalid package name")
 
-    dest = settings.plugins_dir / f"{Path(full_name).name}.dll"
-    # If they gave Team-Mod style, keep as loose dll named after stem of last segment
-    if "-" in full_name and not full_name_override:
-        dest = settings.plugins_dir / f"{dll_path.stem}.dll"
-    elif full_name_override and not full_name_override.lower().endswith(".dll"):
-        # Store as folder? For single DLL keep loose file named after override stem
-        dest = settings.plugins_dir / f"{Path(full_name_override).name}.dll"
-
-    ensure_within(settings.plugins_dir, dest)
-    if dest.exists():
-        backup_tmp = (
-            settings.backups_dir
-            / "pre_install"
-            / f"{dest.name}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
+    item = {"full_name": full_name, "name": name}
+    existing = (
+        db.query(InstalledPackage)
+        .filter(
+            (InstalledPackage.install_path.contains(dll_path.stem))
+            | (InstalledPackage.full_name == full_name)
         )
-        backup_tmp.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(dest, backup_tmp)
+        .first()
+    )
+    # Prefer updating an existing live-only folder's DLL when matched
+    live_folder = resolve_live_only_folder(settings, full_name=full_name, name=name)
+    if live_folder is not None and settings.live_plugins_root is not None:
+        dest = live_folder / f"{dll_path.stem}.dll"
+        files_root = settings.live_plugins_root
+        live_only = True
+    else:
+        dest = settings.plugins_dir / f"{Path(full_name).name}.dll"
+        if "-" in full_name and not full_name_override:
+            dest = settings.plugins_dir / f"{dll_path.stem}.dll"
+        elif full_name_override and not full_name_override.lower().endswith(".dll"):
+            dest = settings.plugins_dir / f"{Path(full_name_override).name}.dll"
+        files_root = settings.plugins_dir
+        live_only = False
+
+    ensure_within(files_root, dest)
+    if dest.exists():
+        _backup_files([dest], dest.name, settings)
 
     shutil.copy2(dll_path, dest)
-    rel = dest.relative_to(settings.plugins_dir).as_posix()
+    rel = dest.relative_to(files_root).as_posix()
 
     existing = (
         db.query(InstalledPackage)
@@ -567,7 +664,7 @@ def import_dll_file(
         name=name,
         owner=None,
         version=version,
-        install_path=str(dest),
+        install_path=str(dest if not live_only else live_folder or dest),
         description=None,
         dependencies=[],
         normalized_files=[(rel, dest)],
@@ -584,10 +681,11 @@ def import_dll_file(
         package=full_name,
         source=source,
         result="ok",
-        message=f"Imported DLL {dest.name}",
+        message=f"Imported DLL {dest.name}" + (" (live-only)" if live_only else ""),
     )
     set_setting(db, "restart_required", True)
-    sync_config_tree_to_live()
+    if not live_only:
+        sync_config_tree_to_live(only_relative_paths=[rel])
     db.commit()
     db.refresh(pkg)
     return pkg
@@ -599,53 +697,59 @@ def uninstall_package(db: Session, package_id: int) -> None:
     if pkg is None:
         raise ValueError("Package not found")
 
-    # Shared dependency check
     dependents = []
     for other in db.query(InstalledPackage).filter(InstalledPackage.id != pkg.id).all():
         deps = json.loads(other.dependencies_json or "[]")
         for dep in deps:
             if pkg.full_name in dep or dep.startswith(pkg.full_name + "-"):
                 dependents.append(other.full_name)
-    # Only block if this package is a dependency and still required —
-    # actually for uninstall of the selected package we remove it; we refuse
-    # to auto-remove shared deps. If user uninstalls a leaf package, OK.
-    # If other packages depend on THIS package, warn but allow with cascade check:
     if dependents:
         raise ValueError(
             f"Cannot uninstall {pkg.full_name}; required by: {', '.join(dependents)}"
         )
 
-    # Delete owned files only
+    live_only = path_is_under_live(pkg.install_path, settings)
+    files_root = _files_root_for_path(pkg.install_path, settings)
     owned_rels = [owned.relative_path for owned in pkg.files]
+
     for owned in list(pkg.files):
-        target = settings.plugins_dir / owned.relative_path
+        target = files_root / owned.relative_path
         try:
-            ensure_within(settings.plugins_dir, target if target.exists() else target.parent)
+            ensure_within(files_root, target if target.exists() else target.parent)
         except PathEscapeError:
             continue
         if target.is_file():
             target.unlink()
-        elif target.is_dir():
+        elif target.is_dir() and not live_only:
             shutil.rmtree(target, ignore_errors=True)
 
-    # Remove empty package directory
     install = Path(pkg.install_path)
-    if install.is_dir() and install.parent == settings.plugins_dir:
-        try:
-            if not any(install.rglob("*")):
-                shutil.rmtree(install, ignore_errors=True)
-            else:
-                # remove dir if only empty leftovers
-                shutil.rmtree(install, ignore_errors=True)
-        except OSError:
-            pass
+    if install.is_dir():
+        if live_only:
+            # Leave runtime dirs (map_data etc.); only remove empty leftover package dirs
+            try:
+                leftovers = [
+                    p
+                    for p in install.rglob("*")
+                    if p.is_file()
+                    and not any(part.lower() in _RUNTIME_DIR_NAMES for part in p.relative_to(install).parts)
+                ]
+                if not leftovers and not any(
+                    (install / d).is_dir() for d in _RUNTIME_DIR_NAMES if (install / d).exists()
+                ):
+                    shutil.rmtree(install, ignore_errors=True)
+                # If map_data remains, keep the folder
+            except OSError:
+                pass
+        elif install.parent == settings.plugins_dir:
+            shutil.rmtree(install, ignore_errors=True)
 
     name = pkg.full_name
     source = pkg.source
     db.delete(pkg)
-    remove_paths_from_live(owned_rels)
-    # Also remove package folder name from live if present
-    remove_paths_from_live([name])
+    if not live_only:
+        remove_paths_from_live(owned_rels)
+        remove_paths_from_live([name])
     set_setting(db, "restart_required", True)
     log_activity(db, "uninstall", package=name, source=source, result="ok", message=f"Uninstalled {name}")
     db.commit()
@@ -665,6 +769,12 @@ def set_enabled(db: Session, package_id: int, enabled: bool) -> InstalledPackage
         paths = list(install.rglob("*.dll")) + list(install.rglob("*.dll.disabled"))
 
     for path in paths:
+        # Skip runtime trees
+        try:
+            if any(part.lower() in _RUNTIME_DIR_NAMES for part in path.parts):
+                continue
+        except Exception:
+            pass
         if enabled and path.name.endswith(".dll.disabled"):
             new_path = path.with_name(path.name[: -len(".disabled")])
             path.rename(new_path)
@@ -674,7 +784,8 @@ def set_enabled(db: Session, package_id: int, enabled: bool) -> InstalledPackage
 
     pkg.enabled = enabled
     set_setting(db, "restart_required", True)
-    sync_config_tree_to_live()
+    if not path_is_under_live(pkg.install_path, settings):
+        sync_config_tree_to_live(only_relative_paths=[f.relative_path for f in pkg.files] + [pkg.full_name])
     log_activity(
         db,
         "enable" if enabled else "disable",
@@ -704,10 +815,8 @@ def link_package(
         raise ValueError(
             f"Remote package not found on {source}: {full_name}. Refresh package indexes first."
         )
-    # Keep the installed on-disk version unless caller overrides
     ver = version or pkg.version
     if ver and not any(v.version_number == ver for v in info.versions):
-        # Still allow link; version may be a fork / slightly different
         pass
     if not ver and info.latest:
         ver = info.latest.version_number
