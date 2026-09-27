@@ -647,3 +647,11 @@ def server_status(
         "status": supervisor.get_process_status(db),
         "display_name": get_setting(db, "container_display_name", "BabyGotBoar"),
     }
+
+
+@router.get("/server/diagnose")
+def server_diagnose(
+    user: Annotated[AdminUser, Depends(_auth_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict[str, Any]:
+    return supervisor.diagnose(db)

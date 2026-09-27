@@ -30,12 +30,21 @@ async def lifespan(app: FastAPI):
     db = get_session()
     try:
         ensure_admin_user(db)
-        if settings.supervisor_url and db.get(Setting, "supervisor_url") is None:
+        # Env wins on every boot so .env / compose changes apply without wiping the DB.
+        if settings.supervisor_url:
             set_setting(db, "supervisor_url", settings.supervisor_url)
-        if settings.supervisor_password and db.get(Setting, "supervisor_password") is None:
-            set_setting(db, "supervisor_password", settings.supervisor_password)
-        if settings.supervisor_user and db.get(Setting, "supervisor_user") is None:
+        if settings.supervisor_user:
             set_setting(db, "supervisor_user", settings.supervisor_user)
+        # Allow clearing password with empty env only when explicitly set; otherwise keep DB value
+        # when SUPERVISOR_PASSWORD is omitted. If the var is present (even empty), sync it.
+        import os
+
+        if "SUPERVISOR_PASSWORD" in os.environ:
+            set_setting(db, "supervisor_password", settings.supervisor_password)
+        elif settings.supervisor_password and db.get(Setting, "supervisor_password") is None:
+            set_setting(db, "supervisor_password", settings.supervisor_password)
+        if settings.supervisor_program:
+            set_setting(db, "supervisor_program", settings.supervisor_program)
         if db.get(Setting, "container_display_name") is None:
             set_setting(db, "container_display_name", settings.container_display_name)
         if db.get(Setting, "timezone") is None:
