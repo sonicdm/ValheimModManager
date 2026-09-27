@@ -113,6 +113,7 @@ Lists BepInEx and mod `.cfg` files under the config tree. Open one to edit (stru
 
 ### Settings
 
+- Set **time zone** (IANA name, e.g. `America/Los_Angeles`) so the maintenance cron runs at local wall-clock time — not UTC. Compose `TIMEZONE` overrides this on every container start.
 - Enable **automatic maintenance** (update check + optional apply in a time window).
 - Choose whether maintenance restarts the server after updates.
 - **Force restart when player status is unknown** — off by default (fail-safe); turn on only if you accept restarts when the manager cannot prove the server is empty.

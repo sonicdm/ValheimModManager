@@ -53,7 +53,8 @@ async def lifespan(app: FastAPI):
             set_setting(db, "supervisor_program", settings.supervisor_program)
         if db.get(Setting, "container_display_name") is None:
             set_setting(db, "container_display_name", settings.container_display_name)
-        if db.get(Setting, "timezone") is None:
+        # TIMEZONE from compose/.env always wins so cron tracks the host zone.
+        if settings.timezone:
             set_setting(db, "timezone", settings.timezone)
     finally:
         db.close()

@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     admin_password: str = "changeme"
     session_cookie: str = "vmm_session"
     session_max_age: int = 60 * 60 * 24 * 7
-    timezone: str = "UTC"
+    timezone: str = "America/Los_Angeles"
     supervisor_url: str = ""
     supervisor_user: str = "admin"
     supervisor_password: str = ""

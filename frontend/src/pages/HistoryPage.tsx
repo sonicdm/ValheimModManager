@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, Activity } from "../api/client";
+import { formatLocalDateTime } from "../lib/time";
 
 export default function HistoryPage() {
   const [rows, setRows] = useState<Activity[]>([]);
@@ -78,7 +79,7 @@ export default function HistoryPage() {
             {rows.map((r) => (
               <tr key={r.id} className="border-b border-bark/5">
                 <td className="px-4 py-2 whitespace-nowrap">
-                  {new Date(r.timestamp).toLocaleString()}
+                  {formatLocalDateTime(r.timestamp)}
                 </td>
                 <td className="px-4 py-2">{r.action}</td>
                 <td className="px-4 py-2">{r.package || "—"}</td>

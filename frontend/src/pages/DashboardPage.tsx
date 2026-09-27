@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, DashboardStats } from "../api/client";
+import { formatLocalDateTime } from "../lib/time";
 
 function Stat({ label, value, hint }: { label: string; value: string | number; hint?: string }) {
   return (
@@ -176,16 +177,17 @@ export default function DashboardPage() {
           <p className="mt-1 text-sm text-bark/70">
             Next update window:{" "}
             {stats.next_maintenance_window
-              ? new Date(stats.next_maintenance_window).toLocaleString()
+              ? formatLocalDateTime(stats.next_maintenance_window)
               : "—"}
           </p>
           <p className="mt-4 text-xs text-bark/50">
-            Last scan: {stats.last_scan_at ? new Date(stats.last_scan_at).toLocaleString() : "never"}
+            Last scan:{" "}
+            {stats.last_scan_at ? formatLocalDateTime(stats.last_scan_at) : "never"}
           </p>
           <p className="text-xs text-bark/50">
             Last update check:{" "}
             {stats.last_update_check_at
-              ? new Date(stats.last_update_check_at).toLocaleString()
+              ? formatLocalDateTime(stats.last_update_check_at)
               : "never"}
           </p>
         </div>
@@ -201,7 +203,7 @@ export default function DashboardPage() {
         <ul className="mt-4 space-y-2">
           {stats.recent_activity.slice(0, 8).map((a) => (
             <li key={a.id} className="flex flex-wrap gap-2 text-sm">
-              <span className="text-bark/50">{new Date(a.timestamp).toLocaleString()}</span>
+              <span className="text-bark/50">{formatLocalDateTime(a.timestamp)}</span>
               <span className="font-medium">{a.action}</span>
               <span className="text-bark/70">{a.package || a.message}</span>
               <span className={a.result === "ok" ? "text-moss" : "text-danger"}>{a.result}</span>

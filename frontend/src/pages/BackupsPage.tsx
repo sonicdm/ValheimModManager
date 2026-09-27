@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, Backup } from "../api/client";
+import { formatLocalDateTime } from "../lib/time";
 
 export default function BackupsPage() {
   const [backups, setBackups] = useState<Backup[]>([]);
@@ -81,7 +82,7 @@ export default function BackupsPage() {
             {backups.map((b) => (
               <tr key={b.id} className="border-b border-bark/5">
                 <td className="px-4 py-2 whitespace-nowrap">
-                  {new Date(b.created_at).toLocaleString()}
+                  {formatLocalDateTime(b.created_at)}
                 </td>
                 <td className="px-4 py-2">{b.label}</td>
                 <td className="px-4 py-2">{b.reason}</td>

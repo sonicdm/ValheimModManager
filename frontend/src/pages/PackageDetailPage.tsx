@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, InstalledPackage, Package } from "../api/client";
+import { formatLocalDate } from "../lib/time";
 
 type InstallPreviewResponse = {
   packages: { source: string; full_name: string; version: string; dependencies: string[] }[];
@@ -40,8 +41,7 @@ function formatBytes(n?: number | null): string | null {
 
 function formatDate(iso?: string | null): string | null {
   if (!iso) return null;
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? null : d.toLocaleDateString();
+  return formatLocalDate(iso) || null;
 }
 
 export default function PackageDetailPage() {

@@ -10,7 +10,7 @@ from ..models import ActivityEvent, Setting
 
 
 DEFAULT_SETTINGS: dict[str, Any] = {
-    "timezone": "UTC",
+    "timezone": "America/Los_Angeles",
     "container_display_name": "valheim",
     "supervisor_url": "",
     "supervisor_user": "admin",

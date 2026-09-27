@@ -25,7 +25,7 @@ services:
       - SUPERVISOR_PASSWORD=${SUPERVISOR_PASSWORD:-}
       - SUPERVISOR_PROGRAM=${SUPERVISOR_PROGRAM:-valheim-server}
       - CONTAINER_DISPLAY_NAME=${CONTAINER_DISPLAY_NAME:-valheim}
-      - TIMEZONE=${TIMEZONE:-UTC}
+      - TIMEZONE=${TIMEZONE:-America/Los_Angeles}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:

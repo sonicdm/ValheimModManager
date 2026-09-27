@@ -212,8 +212,22 @@ def write_settings(
     user: Annotated[AdminUser, Depends(_auth_user)],
     db: Annotated[Session, Depends(get_db)],
 ) -> SettingsResponse:
+    if "timezone" in body.values:
+        tz_name = str(body.values.get("timezone") or "").strip() or "UTC"
+        try:
+            from zoneinfo import ZoneInfo
+
+            ZoneInfo(tz_name)
+        except Exception as exc:
+            raise HTTPException(400, f"Invalid timezone: {tz_name}") from exc
+        body.values["timezone"] = tz_name
     values = update_settings(db, body.values)
     log_activity(db, "settings", result="ok", message="Settings updated")
+    # Refresh cron/intervals so timezone + maintenance hour take effect immediately.
+    try:
+        update_service.reschedule_scheduler()
+    except Exception:
+        log_activity(db, "settings", result="error", message="Settings saved but scheduler refresh failed")
     return SettingsResponse(values=values)
 
 

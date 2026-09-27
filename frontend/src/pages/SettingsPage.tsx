@@ -1,6 +1,22 @@
 import { FormEvent, useEffect, useState } from "react";
 import { api } from "../api/client";
 
+const COMMON_TIMEZONES = [
+  "America/Los_Angeles",
+  "America/Denver",
+  "America/Chicago",
+  "America/New_York",
+  "America/Phoenix",
+  "America/Anchorage",
+  "Pacific/Honolulu",
+  "UTC",
+  "Europe/London",
+  "Europe/Berlin",
+  "Europe/Paris",
+  "Australia/Sydney",
+  "Asia/Tokyo",
+];
+
 export default function SettingsPage() {
   const [values, setValues] = useState<Record<string, unknown>>({});
   const [error, setError] = useState<string | null>(null);
@@ -66,13 +82,25 @@ export default function SettingsPage() {
               onChange={(e) => setField("container_display_name", e.target.value)}
             />
           </label>
-          <label className="text-sm">
+          <label className="text-sm md:col-span-2">
             Time zone
             <input
               className="mt-1 w-full rounded border border-bark/20 px-3 py-2"
+              list="timezone-options"
               value={String(values.timezone ?? "")}
               onChange={(e) => setField("timezone", e.target.value)}
+              placeholder="America/Los_Angeles"
             />
+            <datalist id="timezone-options">
+              {COMMON_TIMEZONES.map((tz) => (
+                <option key={tz} value={tz} />
+              ))}
+            </datalist>
+            <span className="mt-1 block text-xs text-bark/55">
+              IANA name used for the maintenance cron (e.g. 4:00 means 4am in this zone, not UTC).
+              Compose <code className="text-[11px]">TIMEZONE</code> overrides this on container
+              restart.
+            </span>
           </label>
         </fieldset>
 
@@ -160,7 +188,7 @@ export default function SettingsPage() {
             />
           </label>
           <label className="text-sm">
-            Maintenance hour
+            Maintenance hour (0–23, in the time zone above)
             <input
               type="number"
               min={0}

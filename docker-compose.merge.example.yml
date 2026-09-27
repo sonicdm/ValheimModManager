@@ -29,7 +29,7 @@
 #       - SUPERVISOR_PASSWORD=${SUPERVISOR_HTTP_PASS:-}
 #       - SUPERVISOR_PROGRAM=valheim-server
 #       - CONTAINER_DISPLAY_NAME=valheim
-#       - TIMEZONE=UTC
+#       - TIMEZONE=America/Los_Angeles
 #     restart: unless-stopped
 #
 # volumes:

@@ -133,7 +133,7 @@ async def check_for_updates(db: Session) -> list[PendingUpdate]:
 
 
 def _in_maintenance_window(db: Session, now: datetime | None = None) -> bool:
-    tz_name = get_setting(db, "timezone", "UTC") or "UTC"
+    tz_name = get_setting(db, "timezone", "America/Los_Angeles") or "America/Los_Angeles"
     try:
         tz = ZoneInfo(tz_name)
     except Exception:
@@ -151,7 +151,7 @@ def _in_maintenance_window(db: Session, now: datetime | None = None) -> bool:
 
 
 def next_maintenance_window(db: Session) -> str:
-    tz_name = get_setting(db, "timezone", "UTC") or "UTC"
+    tz_name = get_setting(db, "timezone", "America/Los_Angeles") or "America/Los_Angeles"
     try:
         tz = ZoneInfo(tz_name)
     except Exception:
@@ -234,21 +234,44 @@ async def run_maintenance(db: Session) -> None:
             set_setting(db, "restart_required", False)
 
 
-def configure_scheduler() -> None:
-    if scheduler.running:
-        return
+def configure_scheduler(*, force: bool = False) -> None:
+    """Start or refresh interval/cron jobs from current DB settings."""
     db = get_session()
     try:
         refresh_min = int(get_setting(db, "package_refresh_minutes", 60) or 60)
         update_min = int(get_setting(db, "update_check_minutes", 60) or 60)
-        tz_name = get_setting(db, "timezone", "UTC") or "UTC"
+        tz_name = get_setting(db, "timezone", "America/Los_Angeles") or "America/Los_Angeles"
         hour = int(get_setting(db, "maintenance_hour", 4) or 4)
         minute = int(get_setting(db, "maintenance_minute", 0) or 0)
     finally:
         db.close()
 
-    scheduler.add_job(job_refresh_packages, "interval", minutes=refresh_min, id="refresh_packages", replace_existing=True)
-    scheduler.add_job(job_check_updates, "interval", minutes=update_min, id="check_updates", replace_existing=True)
+    try:
+        ZoneInfo(tz_name)
+    except Exception:
+        logger.warning("Invalid timezone %r — falling back to UTC for scheduler", tz_name)
+        tz_name = "UTC"
+
+    if not scheduler.running:
+        scheduler.start()
+        logger.info("Scheduler started (timezone=%s, maintenance=%02d:%02d)", tz_name, hour, minute)
+    elif not force:
+        return
+
+    scheduler.add_job(
+        job_refresh_packages,
+        "interval",
+        minutes=refresh_min,
+        id="refresh_packages",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        job_check_updates,
+        "interval",
+        minutes=update_min,
+        id="check_updates",
+        replace_existing=True,
+    )
     scheduler.add_job(
         job_maintenance_window,
         "cron",
@@ -259,9 +282,25 @@ def configure_scheduler() -> None:
         replace_existing=True,
     )
     # Also poll maintenance window every 15 minutes in case of missed cron edge
-    scheduler.add_job(job_maintenance_window, "interval", minutes=15, id="maintenance_poll", replace_existing=True)
-    scheduler.start()
-    logger.info("Scheduler started")
+    scheduler.add_job(
+        job_maintenance_window,
+        "interval",
+        minutes=15,
+        id="maintenance_poll",
+        replace_existing=True,
+    )
+    if force and scheduler.running:
+        logger.info(
+            "Scheduler refreshed (timezone=%s, maintenance=%02d:%02d local)",
+            tz_name,
+            hour,
+            minute,
+        )
+
+
+def reschedule_scheduler() -> None:
+    """Re-apply jobs after settings change (timezone / maintenance hour / intervals)."""
+    configure_scheduler(force=True)
 
 
 def shutdown_scheduler() -> None:
