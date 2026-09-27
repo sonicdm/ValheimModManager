@@ -222,7 +222,7 @@ def scan(
     user: Annotated[AdminUser, Depends(_auth_user)],
     db: Annotated[Session, Depends(get_db)],
 ) -> ScanResult:
-    packages = scanner.persist_scan(db)
+    packages, pruned = scanner.persist_scan(db)
     pending = {
         f"{p.source}:{p.full_name}": p.target_version
         for p in db.query(PendingUpdate).filter(PendingUpdate.status.in_(["queued", "deferred"])).all()
@@ -232,6 +232,7 @@ def scan(
         scanned=len(outs),
         managed=sum(1 for p in outs if p.managed),
         unmanaged=sum(1 for p in outs if not p.managed),
+        pruned=pruned,
         packages=outs,
     )
 

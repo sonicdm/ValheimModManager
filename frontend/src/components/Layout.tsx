@@ -30,7 +30,7 @@ export default function Layout() {
           <button
             type="button"
             onClick={() => logout()}
-            className="rounded-md border border-bark/20 bg-paper px-3 py-1.5 hover:bg-mist"
+            className="btn-secondary px-3 py-1.5 text-sm"
           >
             Log out
           </button>

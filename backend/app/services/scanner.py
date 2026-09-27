@@ -9,7 +9,7 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 from ..config import Settings, get_settings
-from ..models import ConfigAssociation, InstalledPackage, OwnedFile
+from ..models import ConfigAssociation, InstalledPackage, OwnedFile, PendingUpdate
 from .dll_meta import read_bepinex_plugin_metadata
 from .live_sync import live_only_plugin_names, path_is_under_live
 from .settings_service import log_activity, set_setting
@@ -299,7 +299,9 @@ def package_present_on_disk(pkg: InstalledPackage, settings: Settings) -> bool:
     return False
 
 
-def persist_scan(db: Session, settings: Settings | None = None) -> list[InstalledPackage]:
+def persist_scan(
+    db: Session, settings: Settings | None = None
+) -> tuple[list[InstalledPackage], list[str]]:
     settings = settings or get_settings()
     scanned = scan_plugins(settings)
     by_path = {p.install_path: p for p in db.query(InstalledPackage).all()}
@@ -417,8 +419,6 @@ def persist_scan(db: Session, settings: Settings | None = None) -> list[Installe
 
         result_packages.append(pkg)
 
-    # Drop DB rows whose files are gone — including managed Thunderstore/Hexium installs.
-    # Previously only local/unmanaged were pruned, so removed mods stayed listed forever.
     pruned: list[str] = []
     for pkg in list(db.query(InstalledPackage).all()):
         if pkg.install_path in seen_paths:
@@ -426,6 +426,11 @@ def persist_scan(db: Session, settings: Settings | None = None) -> list[Installe
         if package_present_on_disk(pkg, settings):
             continue
         pruned.append(pkg.full_name)
+        # Drop queued update rows for packages that no longer exist on disk
+        db.query(PendingUpdate).filter(
+            PendingUpdate.full_name == pkg.full_name,
+            PendingUpdate.source == pkg.source,
+        ).delete(synchronize_session=False)
         db.delete(pkg)
 
     set_setting(db, "last_scan_at", datetime.now(timezone.utc).isoformat())
@@ -440,7 +445,7 @@ def persist_scan(db: Session, settings: Settings | None = None) -> list[Installe
     db.commit()
     for pkg in result_packages:
         db.refresh(pkg)
-    return result_packages
+    return result_packages, pruned
 
 
 def detect_drift(settings: Settings | None = None) -> list[str]:

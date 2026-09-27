@@ -1,5 +1,9 @@
 @import "tailwindcss";
 
+/* Tailwind v4 gates hover behind (hover: hover), which skips or lags on some
+   Windows / remote-desktop setups. Use classic :hover for UI feedback. */
+@custom-variant hover (&:hover);
+
 @theme {
   --font-sans: "Segoe UI", "Trebuchet MS", ui-sans-serif, system-ui, sans-serif;
   --font-display: Georgia, "Times New Roman", serif;
@@ -32,4 +36,19 @@ body {
 
 .font-display {
   font-family: var(--font-display);
+}
+
+@layer components {
+  .btn-primary {
+    @apply inline-flex items-center justify-center rounded-md bg-moss px-3 py-2 text-sm text-paper transition-colors hover:bg-moss-deep disabled:cursor-not-allowed disabled:opacity-60;
+  }
+  .btn-secondary {
+    @apply inline-flex items-center justify-center rounded-md border border-bark/20 bg-paper px-3 py-2 text-sm text-bark transition-colors hover:border-bark/40 hover:bg-mist disabled:cursor-not-allowed disabled:opacity-60;
+  }
+  .btn-danger {
+    @apply inline-flex items-center justify-center rounded-md border border-danger/30 px-3 py-2 text-sm text-danger transition-colors hover:bg-danger/10 disabled:cursor-not-allowed disabled:opacity-60;
+  }
+  .btn-ghost {
+    @apply inline-flex items-center justify-center rounded border border-bark/15 px-2 py-1 text-xs transition-colors hover:border-bark/30 hover:bg-mist disabled:cursor-not-allowed disabled:opacity-60;
+  }
 }

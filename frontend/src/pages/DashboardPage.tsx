@@ -99,7 +99,7 @@ export default function DashboardPage() {
             type="button"
             disabled={busy}
             onClick={scan}
-            className="rounded-md bg-moss px-3 py-2 text-sm text-paper hover:bg-moss-deep"
+            className="btn-primary"
           >
             Scan plugins
           </button>
@@ -107,7 +107,7 @@ export default function DashboardPage() {
             type="button"
             disabled={busy}
             onClick={checkUpdates}
-            className="rounded-md border border-bark/20 bg-paper px-3 py-2 text-sm"
+            className="btn-secondary"
           >
             Check updates
           </button>
@@ -116,7 +116,7 @@ export default function DashboardPage() {
               type="button"
               disabled={busy}
               onClick={restart}
-              className="rounded-md border border-ember/40 bg-ember/10 px-3 py-2 text-sm text-ember"
+              className="btn-secondary border-ember/40 bg-ember/10 text-ember hover:bg-ember/20"
             >
               Restart + sync
             </button>

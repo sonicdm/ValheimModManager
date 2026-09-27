@@ -280,9 +280,10 @@ def test_persist_scan_prunes_missing_managed(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(scanner_mod, "set_setting", lambda *a, **k: None)
     monkeypatch.setattr(scanner_mod, "log_activity", lambda *a, **k: None)
 
-    result = scanner_mod.persist_scan(db, settings)
+    result, pruned = scanner_mod.persist_scan(db, settings)
     names = {p.full_name for p in db.query(InstalledPackage).all()}
     assert "Author-WebMap" not in names
     assert "KeepMe" in names
+    assert "Author-WebMap" in pruned
     assert any(p.full_name == "KeepMe" for p in result)
     db.close()

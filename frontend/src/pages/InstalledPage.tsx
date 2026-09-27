@@ -12,6 +12,7 @@ type LinkForm = {
 export default function InstalledPage() {
   const [packages, setPackages] = useState<InstalledPackage[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
   const [busy, setBusy] = useState<number | null>(null);
   const [linkForm, setLinkForm] = useState<LinkForm | null>(null);
   const [suggestions, setSuggestions] = useState<Package[]>([]);
@@ -51,11 +52,35 @@ export default function InstalledPage() {
   async function act(id: number, fn: () => Promise<unknown>) {
     setBusy(id);
     setError(null);
+    setInfo(null);
     try {
       await fn();
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Action failed");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function rescan() {
+    setBusy(-1);
+    setError(null);
+    setInfo(null);
+    try {
+      const result = await api.post<{
+        scanned: number;
+        pruned?: string[];
+      }>("/api/scan");
+      await load();
+      const pruned = result.pruned ?? [];
+      setInfo(
+        pruned.length
+          ? `Scan found ${result.scanned} on disk; removed ${pruned.length} missing: ${pruned.join(", ")}`
+          : `Scan found ${result.scanned} plugins on disk.`,
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Scan failed");
     } finally {
       setBusy(null);
     }
@@ -86,7 +111,7 @@ export default function InstalledPage() {
           <button
             type="button"
             onClick={() => setImportOpen(true)}
-            className="rounded-md border border-bark/20 bg-paper px-3 py-2 text-sm"
+            className="btn-secondary"
           >
             Import zip / DLL
           </button>
@@ -95,23 +120,24 @@ export default function InstalledPage() {
             onClick={() =>
               act(-1, async () => {
                 await api.post("/api/packages/refresh");
-                await api.post("/api/scan");
+                await rescan();
               })
             }
-            className="rounded-md border border-bark/20 bg-paper px-3 py-2 text-sm"
+            className="btn-secondary"
           >
             Refresh indexes + scan
           </button>
           <button
             type="button"
-            onClick={() => act(-1, () => api.post("/api/scan"))}
-            className="rounded-md bg-moss px-3 py-2 text-sm text-paper"
+            onClick={() => rescan()}
+            className="btn-primary"
           >
             Rescan
           </button>
         </div>
       </div>
       {error && <p className="text-sm text-danger">{error}</p>}
+      {info && <p className="text-sm text-sea">{info}</p>}
 
       <div className="overflow-x-auto rounded-2xl border border-bark/10 bg-paper/80">
         <table className="min-w-full text-left text-sm">
@@ -162,7 +188,7 @@ export default function InstalledPage() {
                     <button
                       type="button"
                       disabled={busy === pkg.id}
-                      className="rounded border border-bark/15 px-2 py-1 text-xs"
+                      className="btn-ghost"
                       onClick={() =>
                         act(pkg.id, () =>
                           api.post(`/api/plugins/${pkg.id}/${pkg.enabled ? "disable" : "enable"}`),
@@ -174,7 +200,7 @@ export default function InstalledPage() {
                     <button
                       type="button"
                       disabled={busy === pkg.id}
-                      className="rounded border border-bark/15 px-2 py-1 text-xs"
+                      className="btn-ghost"
                       onClick={() =>
                         act(pkg.id, () =>
                           api.patch(`/api/plugins/${pkg.id}`, { pinned: !pkg.pinned }),
@@ -186,14 +212,14 @@ export default function InstalledPage() {
                     {pkg.config_files[0] && (
                       <Link
                         to={`/config?file=${encodeURIComponent(pkg.config_files[0])}`}
-                        className="rounded border border-bark/15 px-2 py-1 text-xs"
+                        className="btn-ghost"
                       >
                         Configure
                       </Link>
                     )}
                     <button
                       type="button"
-                      className="rounded border border-sea/30 px-2 py-1 text-xs text-sea"
+                      className="btn-ghost text-sea"
                       onClick={() => openLink(pkg)}
                     >
                       {pkg.source === "thunderstore" || pkg.source === "hexium"
@@ -203,7 +229,7 @@ export default function InstalledPage() {
                     <button
                       type="button"
                       disabled={busy === pkg.id}
-                      className="rounded border border-bark/15 px-2 py-1 text-xs"
+                      className="btn-ghost"
                       title={
                         pkg.live_only
                           ? "Move files back into plugins/ (bootstrap will copy every file)"
@@ -223,7 +249,7 @@ export default function InstalledPage() {
                       <button
                         type="button"
                         disabled={busy === pkg.id}
-                        className="rounded border border-danger/30 px-2 py-1 text-xs text-danger"
+                        className="btn-danger text-xs px-2 py-1"
                         onClick={() => {
                           if (confirm(`Uninstall ${pkg.full_name}?`)) {
                             act(pkg.id, () => api.delete(`/api/plugins/${pkg.id}`));

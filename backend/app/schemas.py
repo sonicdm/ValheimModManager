@@ -193,6 +193,7 @@ class ScanResult(BaseModel):
     scanned: int
     managed: int
     unmanaged: int
+    pruned: list[str] = []
     packages: list[InstalledPackageOut]
 
 
