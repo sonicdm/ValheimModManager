@@ -174,6 +174,8 @@ def dashboard(
     activity = db.query(ActivityEvent).order_by(ActivityEvent.timestamp.desc()).limit(20).all()
     last_scan = get_setting(db, "last_scan_at")
     last_check = get_setting(db, "last_update_check_at")
+    # Do not call Supervisor here — DNS/connect stalls made the whole page feel hung.
+    # Frontend loads /api/server/status separately.
     return DashboardStats(
         installed_count=len(packages),
         unmanaged_count=sum(1 for p in packages if not p.managed),
@@ -183,7 +185,7 @@ def dashboard(
         last_update_check_at=datetime.fromisoformat(last_check) if last_check else None,
         maintenance_enabled=bool(get_setting(db, "maintenance_enabled", True)),
         next_maintenance_window=update_service.next_maintenance_window(db),
-        supervisor_status=supervisor.get_process_status(db),
+        supervisor_status=None,
         supervisor_configured=supervisor.supervisor_configured(db),
         restart_required=bool(get_setting(db, "restart_required", False)),
         recent_activity=[ActivityOut.model_validate(a) for a in activity],

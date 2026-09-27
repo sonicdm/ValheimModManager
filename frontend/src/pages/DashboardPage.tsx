@@ -14,6 +14,7 @@ function Stat({ label, value, hint }: { label: string; value: string | number; h
 
 export default function DashboardPage() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [serverStatus, setServerStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -21,9 +22,20 @@ export default function DashboardPage() {
     setStats(await api.get<DashboardStats>("/api/dashboard"));
   }, []);
 
+  const loadServerStatus = useCallback(async () => {
+    try {
+      const s = await api.get<{ configured: boolean; status?: string | null }>("/api/server/status");
+      if (s.configured) setServerStatus(s.status ?? "Unknown");
+      else setServerStatus(null);
+    } catch {
+      setServerStatus("error: status unavailable");
+    }
+  }, []);
+
   useEffect(() => {
     load().catch((e) => setError(e.message));
-  }, [load]);
+    loadServerStatus();
+  }, [load, loadServerStatus]);
 
   async function scan() {
     setBusy(true);
@@ -54,6 +66,7 @@ export default function DashboardPage() {
     setBusy(true);
     try {
       await api.post("/api/server/restart");
+      await loadServerStatus();
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Restart failed");
@@ -66,11 +79,12 @@ export default function DashboardPage() {
     return <p className="text-bark/70">{error || "Loading dashboard…"}</p>;
   }
 
+  const statusText = serverStatus ?? stats.supervisor_status;
   const online =
-    stats.supervisor_status === "RUNNING"
+    statusText === "RUNNING"
       ? "Online"
       : stats.supervisor_configured
-        ? stats.supervisor_status || "Unknown"
+        ? statusText || "Checking…"
         : "Supervisor off";
 
   return (
