@@ -15,6 +15,9 @@ export default function InstalledPage() {
   const [busy, setBusy] = useState<number | null>(null);
   const [linkForm, setLinkForm] = useState<LinkForm | null>(null);
   const [suggestions, setSuggestions] = useState<Package[]>([]);
+  const [importOpen, setImportOpen] = useState(false);
+  const [importName, setImportName] = useState("");
+  const [importFile, setImportFile] = useState<File | null>(null);
 
   const load = useCallback(async () => {
     setPackages(await api.get<InstalledPackage[]>("/api/plugins"));
@@ -80,6 +83,13 @@ export default function InstalledPage() {
           </p>
         </div>
         <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => setImportOpen(true)}
+            className="rounded-md border border-bark/20 bg-paper px-3 py-2 text-sm"
+          >
+            Import zip / DLL
+          </button>
           <button
             type="button"
             onClick={() =>
@@ -206,6 +216,68 @@ export default function InstalledPage() {
           </tbody>
         </table>
       </div>
+
+      {importOpen && (
+        <div className="fixed inset-0 z-20 grid place-items-center bg-ink/40 p-4">
+          <form
+            className="w-full max-w-lg rounded-2xl bg-paper p-6"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!importFile) {
+                setError("Choose a .zip or .dll file");
+                return;
+              }
+              const form = new FormData();
+              form.append("file", importFile);
+              if (importName.trim()) form.append("full_name", importName.trim());
+              act(-1, () => api.upload("/api/plugins/import", form)).then(() => {
+                setImportOpen(false);
+                setImportFile(null);
+                setImportName("");
+              });
+            }}
+          >
+            <h3 className="font-display text-2xl">Import mod</h3>
+            <p className="mt-1 text-xs text-bark/60">
+              Upload a Thunderstore/Hexium-style .zip, or a single plugin .dll. Optional name overrides
+              the folder / package id (Team-Mod).
+            </p>
+            <label className="mt-4 block text-sm">
+              File
+              <input
+                type="file"
+                accept=".zip,.dll,application/zip"
+                className="mt-1 block w-full text-sm"
+                onChange={(e) => setImportFile(e.target.files?.[0] ?? null)}
+              />
+            </label>
+            <label className="mt-3 block text-sm">
+              Package name override (optional)
+              <input
+                className="mt-1 w-full rounded border border-bark/20 px-3 py-2"
+                value={importName}
+                onChange={(e) => setImportName(e.target.value)}
+                placeholder="Author-ModName"
+              />
+            </label>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                className="px-3 py-2 text-sm"
+                onClick={() => {
+                  setImportOpen(false);
+                  setImportFile(null);
+                }}
+              >
+                Cancel
+              </button>
+              <button type="submit" className="rounded-md bg-moss px-3 py-2 text-sm text-paper">
+                Import
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {linkForm && (
         <div className="fixed inset-0 z-20 grid place-items-center bg-ink/40 p-4">

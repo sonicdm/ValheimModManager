@@ -4,7 +4,7 @@ import json
 from datetime import datetime
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile
 from sqlalchemy.orm import Session
 
 from ..auth.security import (
@@ -241,6 +241,55 @@ def list_plugins(
         for p in db.query(PendingUpdate).filter(PendingUpdate.status.in_(["queued", "deferred"])).all()
     }
     return [_pkg_out(p, pending) for p in db.query(InstalledPackage).order_by(InstalledPackage.name).all()]
+
+
+@router.post("/plugins/import", response_model=InstalledPackageOut)
+async def import_plugin(
+    user: Annotated[AdminUser, Depends(_auth_user)],
+    db: Annotated[Session, Depends(get_db)],
+    file: UploadFile = File(...),
+    full_name: str | None = Form(default=None),
+) -> InstalledPackageOut:
+    """Manually import a .zip package or a .dll plugin."""
+    from pathlib import Path
+    import shutil
+
+    filename = file.filename or "upload"
+    suffix = Path(filename).suffix.lower()
+    if suffix not in {".zip", ".dll"}:
+        raise HTTPException(400, "Upload a .zip package or a .dll plugin")
+
+    settings = get_settings()
+    settings.downloads_dir.mkdir(parents=True, exist_ok=True)
+    safe_name = Path(filename).name.replace("..", "_")
+    dest = settings.downloads_dir / f"upload-{safe_name}"
+
+    try:
+        with dest.open("wb") as out:
+            shutil.copyfileobj(file.file, out)
+        if suffix == ".zip":
+            pkg = installer.install_from_zip_file(db, dest, full_name_override=full_name or None)
+        else:
+            pkg = installer.import_dll_file(db, dest, full_name_override=full_name or None)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except Exception as exc:
+        log_activity(
+            db,
+            "import",
+            package=filename,
+            source="manual",
+            result="error",
+            message=str(exc),
+        )
+        raise HTTPException(500, str(exc)) from exc
+    finally:
+        try:
+            file.file.close()
+        except Exception:
+            pass
+
+    return _pkg_out(pkg)
 
 
 @router.get("/plugins/drift")

@@ -14,9 +14,10 @@ from sqlalchemy.orm import Session
 
 from ..config import get_settings
 from ..models import ConfigAssociation, InstalledPackage, OwnedFile
+from .dll_meta import read_bepinex_plugin_metadata
 from .paths import PathEscapeError, ensure_within, validate_archive_member
 from .settings_service import log_activity, set_setting
-from .packages import get_package, resolve_dependencies
+from .packages import get_package, match_installed_to_remote, resolve_dependencies
 
 logger = logging.getLogger(__name__)
 
@@ -286,6 +287,306 @@ async def install_packages(
     for pkg in installed:
         db.refresh(pkg)
     return installed
+
+
+def _read_manifest(folder: Path) -> dict[str, Any]:
+    manifest = folder / "manifest.json"
+    if not manifest.is_file():
+        return {}
+    try:
+        return json.loads(manifest.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _finalize_package_record(
+    db: Session,
+    *,
+    existing: InstalledPackage | None,
+    source: str,
+    full_name: str,
+    name: str,
+    owner: str | None,
+    version: str | None,
+    install_path: str,
+    description: str | None,
+    dependencies: list[str],
+    normalized_files: list[tuple[str, Path]],
+    plugin_guid: str | None = None,
+) -> InstalledPackage:
+    if existing is None:
+        existing = InstalledPackage(
+            source=source,
+            full_name=full_name,
+            name=name,
+            owner=owner,
+            version=version,
+            plugin_guid=plugin_guid,
+            install_path=install_path,
+            managed=True,
+            enabled=True,
+            description=description,
+            dependencies_json=json.dumps(dependencies),
+        )
+        db.add(existing)
+        db.flush()
+    else:
+        existing.source = source
+        existing.full_name = full_name
+        existing.name = name
+        existing.owner = owner or existing.owner
+        existing.version = version or existing.version
+        existing.plugin_guid = plugin_guid or existing.plugin_guid
+        existing.managed = True
+        existing.enabled = True
+        existing.install_path = install_path
+        existing.description = description or existing.description
+        existing.dependencies_json = json.dumps(dependencies)
+        existing.files.clear()
+
+    for rel, full in normalized_files:
+        existing.files.append(
+            OwnedFile(
+                relative_path=rel,
+                sha256=_sha256(full) if full.is_file() else None,
+                size=full.stat().st_size if full.is_file() else None,
+            )
+        )
+    return existing
+
+
+def install_from_zip_file(
+    db: Session,
+    zip_path: Path,
+    *,
+    full_name_override: str | None = None,
+) -> InstalledPackage:
+    """Install a manually uploaded Thunderstore-style (or plain) zip into plugins/."""
+    settings = get_settings()
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    stage = settings.staging_dir / f"manual-import-{stamp}"
+    if stage.exists():
+        shutil.rmtree(stage)
+    stage.mkdir(parents=True)
+    try:
+        _safe_extract(zip_path, stage)
+        plugin_root = _detect_plugin_root(stage)
+
+        if plugin_root.name == "plugins":
+            children = [c for c in plugin_root.iterdir() if c.is_dir() or c.suffix.lower() == ".dll"]
+            if len(children) == 1 and children[0].is_dir():
+                plugin_root = children[0]
+
+        manifest = _read_manifest(plugin_root)
+        name = manifest.get("name") or plugin_root.name or zip_path.stem
+        version = manifest.get("version_number")
+        deps = list(manifest.get("dependencies") or [])
+        description = manifest.get("description")
+        owner = manifest.get("author")
+
+        # Prefer Team-Mod folder naming when present
+        if full_name_override:
+            full_name = full_name_override.strip()
+        elif "-" in plugin_root.name and plugin_root != stage:
+            full_name = plugin_root.name
+            if not owner:
+                owner = plugin_root.name.split("-", 1)[0]
+        elif owner:
+            full_name = f"{owner}-{name}".replace(" ", "")
+        else:
+            full_name = name.replace(" ", "")
+
+        # DLL metadata
+        guid = None
+        for dll in plugin_root.rglob("*.dll"):
+            meta = read_bepinex_plugin_metadata(str(dll))
+            if meta.guid or meta.name:
+                guid = meta.guid
+                if not version:
+                    version = meta.version
+                if meta.name:
+                    name = meta.name
+                break
+
+        dest_dir = settings.plugins_dir / full_name
+        ensure_within(settings.plugins_dir, dest_dir)
+        if dest_dir.exists():
+            backup_tmp = (
+                settings.backups_dir
+                / "pre_install"
+                / f"{full_name}-{stamp}"
+            )
+            backup_tmp.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(dest_dir, backup_tmp)
+            shutil.rmtree(dest_dir)
+        dest_dir.mkdir(parents=True, exist_ok=True)
+
+        copied = _copy_tree(plugin_root, dest_dir)
+        patchers = _detect_patchers(stage)
+        if patchers:
+            for path in patchers.rglob("*"):
+                if path.is_file():
+                    rel = path.relative_to(patchers).as_posix()
+                    target = settings.patchers_dir / rel
+                    ensure_within(settings.patchers_dir, target.parent)
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(path, target)
+
+        normalized: list[tuple[str, Path]] = []
+        for rel, full in copied:
+            try:
+                normalized.append((full.relative_to(settings.plugins_dir).as_posix(), full))
+            except ValueError:
+                normalized.append((f"{full_name}/{rel}", full))
+
+        existing = (
+            db.query(InstalledPackage).filter(InstalledPackage.full_name == full_name).first()
+        )
+        source = "manual"
+        # Auto-link to a store if we can
+        matched = match_installed_to_remote(
+            db, full_name=full_name, name=name, owner=owner, version=version
+        )
+        package_url = None
+        icon_url = None
+        if matched:
+            source, info = matched
+            full_name = info.full_name
+            owner = info.owner or owner
+            package_url = info.package_url
+            icon_url = info.icon_url
+
+        pkg = _finalize_package_record(
+            db,
+            existing=existing,
+            source=source,
+            full_name=full_name,
+            name=name,
+            owner=owner,
+            version=version,
+            install_path=str(dest_dir),
+            description=description,
+            dependencies=deps,
+            normalized_files=normalized,
+            plugin_guid=guid,
+        )
+        if package_url:
+            pkg.package_url = package_url
+        if icon_url:
+            pkg.icon_url = icon_url
+
+        log_activity(
+            db,
+            "import",
+            package=full_name,
+            source=source,
+            result="ok",
+            message=f"Imported zip as {full_name}" + (f" {version}" if version else ""),
+        )
+        set_setting(db, "restart_required", True)
+        db.commit()
+        db.refresh(pkg)
+        return pkg
+    finally:
+        if stage.exists():
+            shutil.rmtree(stage, ignore_errors=True)
+
+
+def import_dll_file(
+    db: Session,
+    dll_path: Path,
+    *,
+    full_name_override: str | None = None,
+) -> InstalledPackage:
+    """Install a manually uploaded plugin DLL into the plugins root."""
+    settings = get_settings()
+    if dll_path.suffix.lower() != ".dll":
+        raise ValueError("Only .dll files are accepted for DLL import")
+
+    meta = read_bepinex_plugin_metadata(str(dll_path))
+    name = meta.name or dll_path.stem
+    version = meta.version
+    guid = meta.guid
+    full_name = (full_name_override or dll_path.stem).strip()
+    if not full_name:
+        raise ValueError("Package name is required")
+
+    # Disallow path tricks in the chosen name
+    if "/" in full_name or "\\" in full_name or full_name in (".", ".."):
+        raise ValueError("Invalid package name")
+
+    dest = settings.plugins_dir / f"{Path(full_name).name}.dll"
+    # If they gave Team-Mod style, keep as loose dll named after stem of last segment
+    if "-" in full_name and not full_name_override:
+        dest = settings.plugins_dir / f"{dll_path.stem}.dll"
+    elif full_name_override and not full_name_override.lower().endswith(".dll"):
+        # Store as folder? For single DLL keep loose file named after override stem
+        dest = settings.plugins_dir / f"{Path(full_name_override).name}.dll"
+
+    ensure_within(settings.plugins_dir, dest)
+    if dest.exists():
+        backup_tmp = (
+            settings.backups_dir
+            / "pre_install"
+            / f"{dest.name}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
+        )
+        backup_tmp.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(dest, backup_tmp)
+
+    shutil.copy2(dll_path, dest)
+    rel = dest.relative_to(settings.plugins_dir).as_posix()
+
+    existing = (
+        db.query(InstalledPackage)
+        .filter(
+            (InstalledPackage.install_path == str(dest))
+            | (InstalledPackage.full_name == full_name)
+        )
+        .first()
+    )
+
+    source = "manual"
+    matched = match_installed_to_remote(
+        db, full_name=full_name, name=name, version=version
+    )
+    package_url = icon_url = None
+    if matched:
+        source, info = matched
+        full_name = info.full_name
+        package_url = info.package_url
+        icon_url = info.icon_url
+
+    pkg = _finalize_package_record(
+        db,
+        existing=existing,
+        source=source,
+        full_name=full_name,
+        name=name,
+        owner=None,
+        version=version,
+        install_path=str(dest),
+        description=None,
+        dependencies=[],
+        normalized_files=[(rel, dest)],
+        plugin_guid=guid,
+    )
+    if package_url:
+        pkg.package_url = package_url
+    if icon_url:
+        pkg.icon_url = icon_url
+
+    log_activity(
+        db,
+        "import",
+        package=full_name,
+        source=source,
+        result="ok",
+        message=f"Imported DLL {dest.name}",
+    )
+    set_setting(db, "restart_required", True)
+    db.commit()
+    db.refresh(pkg)
+    return pkg
 
 
 def uninstall_package(db: Session, package_id: int) -> None:

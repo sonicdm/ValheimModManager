@@ -38,8 +38,27 @@ export const api = {
   put: <T>(path: string, body?: unknown) =>
     request<T>(path, { method: "PUT", body: body !== undefined ? JSON.stringify(body) : undefined }),
   patch: <T>(path: string, body?: unknown) =>
-    request<T>(path, { method: "PATCH", body: body !== undefined ? JSON.stringify(body) : undefined }),
+    request<T>(path, {
+      method: "PATCH",
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    }),
   delete: <T>(path: string) => request<T>(path, { method: "DELETE" }),
+  upload: async <T>(path: string, form: FormData): Promise<T> => {
+    const headers = new Headers();
+    if (csrfToken) headers.set("X-CSRF-Token", csrfToken);
+    const res = await fetch(path, { method: "POST", headers, body: form, credentials: "include" });
+    if (!res.ok) {
+      let detail = res.statusText;
+      try {
+        const data = await res.json();
+        detail = data.detail || JSON.stringify(data);
+      } catch {
+        /* ignore */
+      }
+      throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+    }
+    return res.json() as Promise<T>;
+  },
 };
 
 export type AuthStatus = {
