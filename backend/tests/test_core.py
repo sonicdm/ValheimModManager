@@ -100,6 +100,9 @@ def test_match_installed_to_remote_by_full_name(tmp_path, monkeypatch):
     assert matched is not None
     assert matched[0] == "thunderstore"
     assert matched[1].full_name == "ValheimModding-Jotunn"
+
+
+def test_config_parse_and_roundtrip():
     raw = """## Settings file
 [General]
 
