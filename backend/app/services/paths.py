@@ -55,6 +55,34 @@ def safe_join(root: Path, *parts: str) -> Path:
     return current
 
 
+def ensure_directory(path: Path) -> None:
+    """Create path as a directory, removing any file that blocks the path.
+
+    Some Thunderstore zips (or leftover staging) can leave a file where a directory
+    is required; mkdir(parents=True) then raises NotADirectoryError (Errno 20).
+    """
+    path = Path(path)
+    if path.is_dir():
+        return
+    if path.exists() or path.is_symlink():
+        path.unlink()
+    to_create: list[Path] = []
+    current = path
+    while True:
+        parent = current.parent
+        if parent == current:
+            break
+        if parent.is_dir():
+            break
+        if parent.exists() or parent.is_symlink():
+            parent.unlink()
+        to_create.append(parent)
+        current = parent
+    for parent in reversed(to_create):
+        parent.mkdir(exist_ok=True)
+    path.mkdir(parents=True, exist_ok=True)
+
+
 def validate_archive_member(member_name: str, dest_root: Path) -> Path:
     """Validate a zip member name and return the destination path under dest_root."""
     name = member_name.replace("\\", "/")

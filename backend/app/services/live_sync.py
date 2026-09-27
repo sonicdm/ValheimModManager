@@ -5,7 +5,8 @@ import shutil
 from pathlib import Path
 
 from ..config import VALHEIM_CONFIG_BEPINEX, Settings, get_settings
-from .paths import PathEscapeError, ensure_within
+from .paths import PathEscapeError, ensure_directory, ensure_within
+
 
 logger = logging.getLogger(__name__)
 
@@ -228,12 +229,12 @@ def remove_paths_from_live(relative_plugin_paths: list[str], settings: Settings 
 
 def merge_tree_into(src: Path, dest: Path) -> list[tuple[str, Path]]:
     """Copy package files into dest without deleting existing dest files (keeps runtime data)."""
-    dest.mkdir(parents=True, exist_ok=True)
+    ensure_directory(dest)
     copied: list[tuple[str, Path]] = []
     if src.is_file():
         target = dest / src.name
         ensure_within(dest, target.parent)
-        target.parent.mkdir(parents=True, exist_ok=True)
+        ensure_directory(target.parent)
         shutil.copy2(src, target)
         copied.append((src.name, target))
         return copied
@@ -243,7 +244,9 @@ def merge_tree_into(src: Path, dest: Path) -> list[tuple[str, Path]]:
         rel = path.relative_to(src).as_posix()
         target = dest / rel
         ensure_within(dest, target.parent)
-        target.parent.mkdir(parents=True, exist_ok=True)
+        ensure_directory(target.parent)
+        if target.exists() and target.is_dir():
+            shutil.rmtree(target)
         shutil.copy2(path, target)
         copied.append((rel, target))
     return copied

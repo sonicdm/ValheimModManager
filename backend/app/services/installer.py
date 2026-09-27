@@ -23,7 +23,7 @@ from .live_sync import (
     resolve_live_only_folder,
     sync_config_tree_to_live,
 )
-from .paths import PathEscapeError, ensure_within, validate_archive_member
+from .paths import PathEscapeError, ensure_directory, ensure_within, validate_archive_member
 from .settings_service import log_activity, set_setting
 from .packages import get_package, match_installed_to_remote, resolve_dependencies
 
@@ -56,24 +56,42 @@ async def download_package(url: str, dest: Path) -> Path:
     return dest
 
 
+def _ensure_directory(path: Path) -> None:
+    """Create path as a directory, removing any file that blocks the path.
+
+    Some Thunderstore zips (or leftover staging) can leave a file where a directory
+    is required; mkdir(parents=True) then raises NotADirectoryError (Errno 20).
+    """
+    ensure_directory(path)
+
+
 def _safe_extract(zip_path: Path, dest: Path) -> list[Path]:
     dest.mkdir(parents=True, exist_ok=True)
     extracted: list[Path] = []
     with zipfile.ZipFile(zip_path, "r") as zf:
-        for info in zf.infolist():
-            name = info.filename
-            if not name or name.endswith("/"):
+        # Directories first, then shorter paths, so parents exist before children.
+        members = sorted(
+            zf.infolist(),
+            key=lambda info: (
+                0 if (info.is_dir() or info.filename.replace("\\", "/").endswith("/")) else 1,
+                info.filename.replace("\\", "/").count("/"),
+                info.filename.replace("\\", "/"),
+            ),
+        )
+        for info in members:
+            name = info.filename.replace("\\", "/")
+            if not name or name.endswith("/") or info.is_dir():
                 if name:
                     target_dir = validate_archive_member(name.rstrip("/"), dest)
-                    target_dir.mkdir(parents=True, exist_ok=True)
+                    _ensure_directory(target_dir)
                 continue
             target = validate_archive_member(name, dest)
-            if info.is_dir():
-                target.mkdir(parents=True, exist_ok=True)
-                continue
             if (info.external_attr >> 16) & 0o170000 == 0o120000:
                 raise PathEscapeError(f"Refusing to extract symlink: {name}")
-            target.parent.mkdir(parents=True, exist_ok=True)
+            _ensure_directory(target.parent)
+            # A prior bad extract may have left a directory where this file belongs.
+            if target.exists() and target.is_dir():
+                shutil.rmtree(target)
             with zf.open(info, "r") as src, target.open("wb") as out:
                 shutil.copyfileobj(src, out)
             extracted.append(target)
@@ -81,12 +99,14 @@ def _safe_extract(zip_path: Path, dest: Path) -> list[Path]:
 
 
 def _detect_plugin_root(stage: Path) -> Path:
-    if (stage / "manifest.json").is_file() or any(stage.glob("*.dll")):
-        return stage
+    # Prefer BepInEx plugins tree when present (Thunderstore packs often have
+    # manifest.json at the zip root AND plugins/<Mod>/ underneath).
     if (stage / "plugins").is_dir():
         return stage / "plugins"
     if (stage / "BepInEx" / "plugins").is_dir():
         return stage / "BepInEx" / "plugins"
+    if (stage / "manifest.json").is_file() or any(stage.glob("*.dll")):
+        return stage
     subdirs = [p for p in stage.iterdir() if p.is_dir()]
     if len(subdirs) == 1:
         return _detect_plugin_root(subdirs[0])
@@ -103,19 +123,21 @@ def _detect_patchers(stage: Path) -> Path | None:
 
 def _copy_tree(src: Path, dest: Path) -> list[tuple[str, Path]]:
     copied: list[tuple[str, Path]] = []
-    dest.mkdir(parents=True, exist_ok=True)
+    _ensure_directory(dest)
     if src.is_file():
         target = dest / src.name
         shutil.copy2(src, target)
         copied.append((src.name, target))
         return copied
     for path in src.rglob("*"):
-        if path.is_dir():
+        if path.is_dir() or path.is_symlink():
             continue
         rel = path.relative_to(src).as_posix()
         target = dest / rel
         ensure_within(dest, target.parent)
-        target.parent.mkdir(parents=True, exist_ok=True)
+        _ensure_directory(target.parent)
+        if target.exists() and target.is_dir():
+            shutil.rmtree(target)
         shutil.copy2(path, target)
         copied.append((rel, target))
     return copied

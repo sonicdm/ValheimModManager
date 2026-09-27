@@ -210,7 +210,26 @@ def test_restart_server_stop_bootstrap_start(monkeypatch):
     ]
 
 
-def test_package_present_on_disk(tmp_path: Path):
+def test_safe_extract_recovers_when_file_blocks_directory(tmp_path: Path):
+    import zipfile
+    from app.services.installer import _safe_extract
+
+    zip_path = tmp_path / "pack.zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        # File where a directory should be, then nested file under that path
+        zf.writestr("plugins/Mod/vendor/leaflet", b"not-a-dir")
+        zf.writestr("plugins/Mod/vendor/leaflet/leaflet.js", b"console.log(1)")
+
+    dest = tmp_path / "out"
+    # Pre-seed the blocking file the same way a bad prior extract would
+    blocking = dest / "plugins" / "Mod" / "vendor" / "leaflet"
+    blocking.parent.mkdir(parents=True)
+    blocking.write_bytes(b"stale")
+
+    extracted = _safe_extract(zip_path, dest)
+    assert (dest / "plugins" / "Mod" / "vendor" / "leaflet").is_dir()
+    assert (dest / "plugins" / "Mod" / "vendor" / "leaflet" / "leaflet.js").read_bytes() == b"console.log(1)"
+    assert extracted
     from app.models import InstalledPackage
     from app.services.scanner import package_present_on_disk
 
