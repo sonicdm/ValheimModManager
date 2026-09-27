@@ -105,6 +105,7 @@ class PackageVersionOut(BaseModel):
     date_created: str | None = None
     downloads: int = 0
     file_size: int | None = None
+    website_url: str | None = None
 
 
 class PackageOut(BaseModel):

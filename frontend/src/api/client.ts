@@ -138,6 +138,7 @@ export type Package = {
   rating_score: number;
   downloads: number;
   categories: string[];
+  is_deprecated?: boolean;
   installed: boolean;
   installed_version?: string | null;
   latest_version?: string | null;
@@ -150,7 +151,11 @@ export type PackageVersion = {
   download_url: string;
   dependencies: string[];
   description?: string | null;
+  icon?: string | null;
+  date_created?: string | null;
   downloads: number;
+  file_size?: number | null;
+  website_url?: string | null;
 };
 
 export type ConfigFile = { path: string; name: string; size: number; modified_at?: string | null };

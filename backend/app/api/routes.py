@@ -504,6 +504,7 @@ def package_detail(
                 date_created=v.date_created,
                 downloads=v.downloads,
                 file_size=v.file_size,
+                website_url=v.website_url,
             )
             for v in pkg.versions
         ],

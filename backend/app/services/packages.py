@@ -27,6 +27,7 @@ class PackageVersion:
     date_created: str | None = None
     downloads: int = 0
     file_size: int | None = None
+    website_url: str | None = None
 
 
 @dataclass
@@ -100,6 +101,7 @@ def _parse_package(source: str, raw: dict[str, Any]) -> PackageInfo:
                 date_created=v.get("date_created"),
                 downloads=downloads,
                 file_size=v.get("file_size"),
+                website_url=v.get("website_url"),
             )
         )
     latest = versions[0] if versions else None

@@ -131,6 +131,12 @@ export default function PackageDetailPage() {
   if (!pkg && !error) return <p className="text-bark/70">Loading package…</p>;
   if (!pkg) return <p className="text-danger">{error}</p>;
 
+  const selected =
+    (pkg.versions || []).find((v) => v.version_number === version) || (pkg.versions || [])[0];
+  const description = (selected?.description || pkg.description || "").trim();
+  const iconUrl = selected?.icon || pkg.icon_url || null;
+  const deps = selected?.dependencies?.length ? selected.dependencies : pkg.dependencies || [];
+  const website = selected?.website_url || null;
   const installing = busy === "install";
   const previewing = busy === "preview";
   const installLabel = installing
@@ -139,35 +145,103 @@ export default function PackageDetailPage() {
       ? "Reinstall / Update"
       : "Install";
 
+  function formatBytes(n?: number | null): string | null {
+    if (n == null || n <= 0) return null;
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+    return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  function formatDate(iso?: string | null): string | null {
+    if (!iso) return null;
+    const d = new Date(iso);
+    return Number.isNaN(d.getTime()) ? null : d.toLocaleDateString();
+  }
+
   return (
     <div className="space-y-6">
       <Link to="/discover" className="text-sm text-sea hover:underline">
         ← Discover
       </Link>
       <div className="flex flex-wrap gap-4">
-        {pkg.icon_url && (
-          <img src={pkg.icon_url} alt="" className="h-24 w-24 rounded-xl object-cover" />
+        {iconUrl ? (
+          <img src={iconUrl} alt="" className="h-24 w-24 rounded-xl object-cover" />
+        ) : (
+          <div className="grid h-24 w-24 place-items-center rounded-xl bg-mist text-sm text-bark/50">
+            mod
+          </div>
         )}
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <h2 className="font-display text-4xl">{pkg.name}</h2>
             <span className="rounded-full bg-mist px-2 py-0.5 text-xs uppercase">{pkg.source}</span>
+            {pkg.is_deprecated && (
+              <span className="rounded-full bg-danger/15 px-2 py-0.5 text-xs text-danger">
+                deprecated
+              </span>
+            )}
+            {pkg.installed && (
+              <span className="rounded-full bg-moss/15 px-2 py-0.5 text-xs text-moss-deep">
+                installed {pkg.installed_version}
+              </span>
+            )}
           </div>
           <p className="text-sm text-bark/70">
             {pkg.owner} · {pkg.full_name}
           </p>
-          {pkg.package_url && (
-            <a
-              href={pkg.package_url}
-              target="_blank"
-              rel="noreferrer"
-              className="text-sm text-sea hover:underline"
-            >
-              Open on {pkg.source}
-            </a>
+          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-sm text-bark/65">
+            {pkg.package_url && (
+              <a
+                href={pkg.package_url}
+                target="_blank"
+                rel="noreferrer"
+                className="text-sea hover:underline"
+              >
+                Open on {pkg.source}
+              </a>
+            )}
+            {website && (
+              <a href={website} target="_blank" rel="noreferrer" className="text-sea hover:underline">
+                Project website
+              </a>
+            )}
+          </div>
+          <p className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-bark/60">
+            <span>{pkg.downloads.toLocaleString()} downloads</span>
+            {pkg.rating_score > 0 && <span>★ {pkg.rating_score}</span>}
+            {formatDate(pkg.date_updated) && <span>Updated {formatDate(pkg.date_updated)}</span>}
+            {selected?.downloads != null && (
+              <span>
+                v{selected.version_number}: {selected.downloads.toLocaleString()} downloads
+              </span>
+            )}
+            {formatBytes(selected?.file_size) && <span>{formatBytes(selected?.file_size)}</span>}
+            {formatDate(selected?.date_created) && (
+              <span>Released {formatDate(selected?.date_created)}</span>
+            )}
+          </p>
+          {(pkg.categories || []).length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {pkg.categories.map((c) => (
+                <span
+                  key={c}
+                  className="rounded-full bg-mist px-2 py-0.5 text-[10px] uppercase tracking-wide text-bark/70"
+                >
+                  {c}
+                </span>
+              ))}
+            </div>
           )}
-          <p className="mt-3 max-w-2xl text-sm text-bark/80">{pkg.description}</p>
         </div>
+      </div>
+
+      <div className="rounded-2xl border border-bark/10 bg-paper/80 p-5">
+        <h3 className="font-display text-2xl">About</h3>
+        {description ? (
+          <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-bark/85">{description}</p>
+        ) : (
+          <p className="mt-3 text-sm text-bark/55">No description provided for this version.</p>
+        )}
       </div>
 
       <div className="rounded-2xl border border-bark/10 bg-paper/80 p-5">
@@ -184,6 +258,7 @@ export default function PackageDetailPage() {
               {(pkg.versions || []).map((v) => (
                 <option key={v.version_number} value={v.version_number}>
                   {v.version_number}
+                  {v.downloads ? ` · ${v.downloads.toLocaleString()} dl` : ""}
                 </option>
               ))}
             </select>
@@ -307,11 +382,14 @@ export default function PackageDetailPage() {
 
       <div className="rounded-2xl border border-bark/10 bg-paper/80 p-5">
         <h3 className="font-display text-2xl">Dependencies</h3>
+        <p className="mt-1 text-xs text-bark/55">
+          For {selected?.version_number || pkg.latest_version || "selected version"}
+        </p>
         <ul className="mt-3 list-disc pl-5 text-sm text-bark/80">
-          {(pkg.dependencies || []).map((d) => (
+          {deps.map((d) => (
             <li key={d}>{d}</li>
           ))}
-          {(pkg.dependencies || []).length === 0 && <li>None declared</li>}
+          {deps.length === 0 && <li>None declared</li>}
         </ul>
       </div>
     </div>
