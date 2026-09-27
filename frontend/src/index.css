@@ -52,3 +52,17 @@ body {
     @apply inline-flex items-center justify-center rounded border border-bark/15 px-2 py-1 text-xs transition-colors hover:border-bark/30 hover:bg-mist disabled:cursor-not-allowed disabled:opacity-60;
   }
 }
+
+@keyframes install-indeterminate {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
+}
+
+.install-progress-bar {
+  width: 40%;
+  animation: install-indeterminate 1.4s ease-in-out infinite;
+}
