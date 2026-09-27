@@ -1,0 +1,29 @@
+# Example: merge into the existing Valheim Server docker-compose.yaml later.
+# Do not apply until the standalone manager is proven.
+#
+# services:
+#   valheim:
+#     # existing BabyGotBoar service unchanged
+#
+#   mod-manager:
+#     build: /path/to/ValheimModManager
+#     # or: image: your-registry/valheim-mod-manager:latest
+#     container_name: ValheimModManager
+#     ports:
+#       - "8090:8090"
+#     volumes:
+#       - ./config/bepinex:/valheim/bepinex
+#       - ./data/bepinex/BepInEx/plugins:/valheim/live-plugins:ro
+#       - mod_manager_data:/data
+#     environment:
+#       - SECRET_KEY=${MOD_MANAGER_SECRET_KEY}
+#       - ADMIN_PASSWORD=${MOD_MANAGER_ADMIN_PASSWORD}
+#       - SUPERVISOR_URL=http://BabyGotBoar:9001
+#       - SUPERVISOR_USER=admin
+#       - SUPERVISOR_PASSWORD=${SUPERVISOR_HTTP_PASS}
+#       - CONTAINER_DISPLAY_NAME=BabyGotBoar
+#       - TIMEZONE=America/Los_Angeles
+#     restart: unless-stopped
+#
+# volumes:
+#   mod_manager_data:

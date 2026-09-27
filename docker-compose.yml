@@ -1,0 +1,36 @@
+services:
+  mod-manager:
+    build: .
+    container_name: ValheimModManager
+    ports:
+      - "8090:8090"
+    volumes:
+      # Persistent manager data (DB, downloads, backups)
+      - mod_manager_data:/data
+      # Live BepInEx config tree from the Valheim server (adjust path if needed)
+      - type: bind
+        source: ${VALHEIM_BEPINEX_PATH:-H:/Games/Valheim Server/Docker/config/bepinex}
+        target: /valheim/bepinex
+      # Optional read-only live plugins for drift detection
+      - type: bind
+        source: ${VALHEIM_LIVE_PLUGINS_PATH:-H:/Games/Valheim Server/Docker/data/bepinex/BepInEx/plugins}
+        target: /valheim/live-plugins
+        read_only: true
+    environment:
+      - DATA_DIR=/data
+      - BEPINEX_ROOT=/valheim/bepinex
+      - LIVE_PLUGINS_ROOT=/valheim/live-plugins
+      - SECRET_KEY=${MOD_MANAGER_SECRET_KEY:-change-me-in-production}
+      - ADMIN_PASSWORD=${MOD_MANAGER_ADMIN_PASSWORD:-changeme}
+      - SUPERVISOR_URL=${SUPERVISOR_URL:-http://host.docker.internal:9001}
+      - SUPERVISOR_USER=${SUPERVISOR_USER:-admin}
+      - SUPERVISOR_PASSWORD=${SUPERVISOR_PASSWORD:-}
+      - SUPERVISOR_PROGRAM=valheim-server
+      - CONTAINER_DISPLAY_NAME=BabyGotBoar
+      - TIMEZONE=America/Los_Angeles
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+volumes:
+  mod_manager_data:
