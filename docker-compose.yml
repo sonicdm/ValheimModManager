@@ -3,7 +3,7 @@ services:
     build: .
     container_name: ValheimModManager
     ports:
-      - "8090:8090"
+      - "${MOD_MANAGER_PORT:-8090}:8090"
     volumes:
       - mod_manager_data:/data
       # lloesche persistent BepInEx tree → /config/bepinex

@@ -15,7 +15,7 @@
 #     # or: image: your-registry/valheim-mod-manager:latest
 #     container_name: ValheimModManager
 #     ports:
-#       - "8090:8090"
+#       - "${MOD_MANAGER_PORT:-8090}:8090"
 #     volumes:
 #       - ./config/bepinex:/valheim/bepinex
 #       # Same host path so persistent-package symlinks resolve at /config/bepinex/...

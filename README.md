@@ -31,6 +31,7 @@ Edit `.env`:
 | `VALHEIM_BEPINEX_PATH` | `$HOME/valheim-server/config/bepinex` |
 | `VALHEIM_DOCKER_NETWORK` | Network of the Valheim container (`docker network ls`) |
 | `SUPERVISOR_URL` | `http://<valheim-container-name>:9001` |
+| `MOD_MANAGER_PORT` | Host port for the UI (default `8090`) |
 
 Do **not** mount `data/bepinex` or its `plugins`/`patchers` subfolders into the manager. Those binds pin the directory the Valheim image renames during BepInEx merge.
 
