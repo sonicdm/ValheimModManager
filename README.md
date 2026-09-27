@@ -14,7 +14,9 @@ Self-hosted companion for an existing [lloesche/valheim-server](https://github.c
 | --- | --- |
 | ![Package](docs/screenshots/package.png) | ![Config](docs/screenshots/config.png) |
 
-![Sign in](docs/screenshots/login.png)
+| Settings | Sign in |
+| --- | --- |
+| ![Settings](docs/screenshots/settings.png) | ![Sign in](docs/screenshots/login.png) |
 
 ## How it fits the vanilla image
 
@@ -46,6 +48,7 @@ Edit `.env` (required values first):
 | `VALHEIM_DOCKER_NETWORK` | Network of the Valheim container (`docker network ls`) |
 | `SUPERVISOR_URL` | `http://<valheim-container-name>:9001` |
 | `MOD_MANAGER_PORT` | Host port for the UI (default `8090`) |
+| `TIMEZONE` | IANA zone for maintenance cron (default `America/Los_Angeles`) |
 
 Do **not** mount `data/bepinex` or its `plugins`/`patchers` subfolders into the manager. Those binds pin the directory the Valheim image renames during BepInEx merge.
 
@@ -73,7 +76,7 @@ After login you get seven pages. Day-to-day work is mostly **Discover → Instal
 - **Check updates** — Compares installed managed mods against Thunderstore/Hexium indexes and shows pending updates.
 - **Restart + sync** — Stops `valheim-server`, runs `valheim-bootstrap` (copies plugins/patchers into the live BepInEx tree), then starts the server again. Use this after installs, uninstalls, config changes that need a reload, or **Make persistent**.
 
-Also shows server status, counts, pending updates, maintenance schedule, and recent activity.
+Also shows server status, counts, pending updates, maintenance schedule (local wall-clock), and recent activity.
 
 ### Discover and install
 
