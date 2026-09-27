@@ -24,15 +24,22 @@ def config_plugin_names(settings: Settings | None = None) -> set[str]:
 
 
 def persistent_package_names(settings: Settings | None = None) -> set[str]:
-    """Top-level plugins entries that are symlinks into .persistent."""
+    """Packages stored under .persistent (via plugins symlink and/or the folder itself)."""
     settings = settings or get_settings()
     names: set[str] = set()
-    if not settings.plugins_dir.is_dir():
-        return names
-    for entry in settings.plugins_dir.iterdir():
-        if entry.name.startswith("."):
-            continue
-        if is_persistent_link(entry, settings):
+    if settings.plugins_dir.is_dir():
+        for entry in settings.plugins_dir.iterdir():
+            if entry.name.startswith("."):
+                continue
+            if is_persistent_link(entry, settings):
+                names.add(entry.name)
+    if settings.persistent_dir.is_dir():
+        for entry in settings.persistent_dir.iterdir():
+            try:
+                if entry.name.startswith(".") or not entry.is_dir() or entry.is_symlink():
+                    continue
+            except OSError:
+                continue
             names.add(entry.name)
     return names
 

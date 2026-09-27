@@ -252,6 +252,37 @@ def test_category_include_exclude_filters():
     assert _matches_category_filters(server, include=[], exclude=[])
 
 
+def test_scan_plugins_skips_broken_plugin_links_and_reads_persistent(tmp_path: Path, monkeypatch):
+    from app.services import scanner as scanner_mod
+    from app.services.live_sync import VALHEIM_CONFIG_BEPINEX
+
+    bepinex = tmp_path / "valheim" / "bepinex"
+    plugins = bepinex / "plugins"
+    persistent = bepinex / ".persistent" / "WebMap"
+    plugins.mkdir(parents=True)
+    persistent.mkdir(parents=True)
+    (persistent / "manifest.json").write_text(
+        '{"name":"WebMap","version_number":"1.0.0","dependencies":[]}',
+        encoding="utf-8",
+    )
+    (persistent / "WebMap.dll").write_bytes(b"MZ")
+    # Symlink with the game-container absolute target (dual-mount style).
+    link = plugins / "WebMap"
+    try:
+        link.symlink_to(VALHEIM_CONFIG_BEPINEX / ".persistent" / "WebMap", target_is_directory=True)
+    except OSError:
+        # Windows without symlink privilege — still cover persistent-dir discovery.
+        pass
+
+    settings = Settings(data_dir=tmp_path / "data", bepinex_root=bepinex, live_plugins_root=None)
+    monkeypatch.setattr(scanner_mod, "read_bepinex_plugin_metadata", lambda *_a, **_k: type(
+        "M", (), {"guid": None, "name": None, "version": None}
+    )())
+    results = scanner_mod.scan_plugins(settings)
+    names = {r.full_name for r in results}
+    assert "WebMap" in names
+
+
 def test_job_scan_plugins_runs_persist_scan(monkeypatch):
     from app.services import updates as updates_mod
 

@@ -44,7 +44,36 @@ def _file_sha256(path: Path) -> str:
 
 
 def _rel(root: Path, path: Path) -> str:
-    return path.relative_to(root).as_posix()
+    try:
+        return path.relative_to(root).as_posix()
+    except ValueError:
+        # Dual mounts (/valheim/bepinex vs /config/bepinex) can disagree on the
+        # absolute prefix after symlink resolve — fall back to the basename path.
+        try:
+            return path.resolve().relative_to(root.resolve()).as_posix()
+        except (ValueError, OSError):
+            return path.name
+
+
+def _safe_is_dir(path: Path) -> bool:
+    try:
+        return path.is_dir()
+    except OSError:
+        return False
+
+
+def _safe_is_symlink(path: Path) -> bool:
+    try:
+        return path.is_symlink()
+    except OSError:
+        return False
+
+
+def _safe_is_file(path: Path) -> bool:
+    try:
+        return path.is_file()
+    except OSError:
+        return False
 
 
 def _load_manifest(folder: Path) -> dict | None:
@@ -95,8 +124,12 @@ def _find_configs(config_dir: Path, guid: str | None, name: str | None) -> list[
 
 def _collect_files(folder: Path, root: Path, *, skip_runtime: bool = False) -> list[str]:
     files: list[str] = []
-    for path in folder.rglob("*"):
-        if not path.is_file() or path.is_symlink():
+    try:
+        iterator = folder.rglob("*")
+    except OSError:
+        return files
+    for path in iterator:
+        if not _safe_is_file(path) or _safe_is_symlink(path):
             continue
         if skip_runtime:
             try:
@@ -105,7 +138,10 @@ def _collect_files(folder: Path, root: Path, *, skip_runtime: bool = False) -> l
                 continue
             if any(part.lower() in _RUNTIME_DIR_NAMES for part in parts):
                 continue
-        files.append(_rel(root, path))
+        try:
+            files.append(_rel(root, path))
+        except (ValueError, OSError):
+            continue
     return sorted(files)
 
 
@@ -188,8 +224,14 @@ def scan_plugins(settings: Settings | None = None) -> list[ScannedPlugin]:
     seen_names: set[str] = set()
 
     if plugins_dir_ok:
-        for entry in sorted(plugins_dir.iterdir(), key=lambda p: p.name.lower()):
-            if not entry.is_dir() or entry.is_symlink():
+        try:
+            entries = sorted(plugins_dir.iterdir(), key=lambda p: p.name.lower())
+        except OSError:
+            entries = []
+        for entry in entries:
+            # Check symlink before is_dir(): following a broken / cross-mount link
+            # can raise OSError (Errno / WinError) and abort the whole scan.
+            if _safe_is_symlink(entry) or not _safe_is_dir(entry):
                 continue
             scanned = _scan_folder(entry, files_root=plugins_dir, config_dir=config_dir)
             seen_files.update(scanned.files)
@@ -198,8 +240,12 @@ def scan_plugins(settings: Settings | None = None) -> list[ScannedPlugin]:
 
         folder_names = {r.name.lower().replace(" ", "") for r in results}
         folder_guids = {r.plugin_guid.lower() for r in results if r.plugin_guid}
-        for dll in sorted(plugins_dir.glob("*.dll")):
-            if dll.is_symlink():
+        try:
+            dll_iter = sorted(plugins_dir.glob("*.dll"))
+        except OSError:
+            dll_iter = []
+        for dll in dll_iter:
+            if _safe_is_symlink(dll):
                 continue
             rel = _rel(plugins_dir, dll)
             if rel in seen_files:
@@ -225,8 +271,12 @@ def scan_plugins(settings: Settings | None = None) -> list[ScannedPlugin]:
                 )
             )
 
-        for disabled in sorted(plugins_dir.glob("*.dll.disabled")):
-            if disabled.is_symlink():
+        try:
+            disabled_iter = sorted(plugins_dir.glob("*.dll.disabled"))
+        except OSError:
+            disabled_iter = []
+        for disabled in disabled_iter:
+            if _safe_is_symlink(disabled):
                 continue
             rel = _rel(plugins_dir, disabled)
             active_name = disabled.name[: -len(".disabled")]
@@ -249,20 +299,16 @@ def scan_plugins(settings: Settings | None = None) -> list[ScannedPlugin]:
                 )
             )
 
-    # Persistent packages: plugins/<name> is a symlink into .persistent
-    from .live_sync import is_persistent_link, persistent_package_names
+    # Persistent packages: always scan via /valheim/bepinex/.persistent/<name>
+    # (not the resolved /config/... symlink target) so relative paths stay under
+    # the manager's bepinex_root mount.
+    from .live_sync import persistent_package_names
 
     for name in sorted(persistent_package_names(settings), key=str.lower):
         if name.lower() in seen_names:
             continue
-        link = settings.plugins_dir / name
-        if not is_persistent_link(link, settings):
-            continue
-        try:
-            entry = link.resolve()
-        except OSError:
-            entry = settings.persistent_dir / name
-        if not entry.is_dir():
+        entry = settings.persistent_dir / name
+        if not _safe_is_dir(entry):
             continue
         scanned = _scan_folder(
             entry, files_root=settings.persistent_dir, config_dir=config_dir, skip_runtime=True
