@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from ..config import get_settings
 from ..models import ConfigAssociation, InstalledPackage, OwnedFile
 from .dll_meta import read_bepinex_plugin_metadata
+from .live_sync import remove_paths_from_live, sync_config_tree_to_live
 from .paths import PathEscapeError, ensure_within, validate_archive_member
 from .settings_service import log_activity, set_setting
 from .packages import get_package, match_installed_to_remote, resolve_dependencies
@@ -283,6 +284,7 @@ async def install_packages(
                 shutil.rmtree(stage, ignore_errors=True)
 
     set_setting(db, "restart_required", True)
+    sync_config_tree_to_live()
     db.commit()
     for pkg in installed:
         db.refresh(pkg)
@@ -484,6 +486,7 @@ def install_from_zip_file(
             message=f"Imported zip as {full_name}" + (f" {version}" if version else ""),
         )
         set_setting(db, "restart_required", True)
+        sync_config_tree_to_live()
         db.commit()
         db.refresh(pkg)
         return pkg
@@ -584,6 +587,7 @@ def import_dll_file(
         message=f"Imported DLL {dest.name}",
     )
     set_setting(db, "restart_required", True)
+    sync_config_tree_to_live()
     db.commit()
     db.refresh(pkg)
     return pkg
@@ -612,6 +616,7 @@ def uninstall_package(db: Session, package_id: int) -> None:
         )
 
     # Delete owned files only
+    owned_rels = [owned.relative_path for owned in pkg.files]
     for owned in list(pkg.files):
         target = settings.plugins_dir / owned.relative_path
         try:
@@ -638,6 +643,9 @@ def uninstall_package(db: Session, package_id: int) -> None:
     name = pkg.full_name
     source = pkg.source
     db.delete(pkg)
+    remove_paths_from_live(owned_rels)
+    # Also remove package folder name from live if present
+    remove_paths_from_live([name])
     set_setting(db, "restart_required", True)
     log_activity(db, "uninstall", package=name, source=source, result="ok", message=f"Uninstalled {name}")
     db.commit()
@@ -666,6 +674,7 @@ def set_enabled(db: Session, package_id: int, enabled: bool) -> InstalledPackage
 
     pkg.enabled = enabled
     set_setting(db, "restart_required", True)
+    sync_config_tree_to_live()
     log_activity(
         db,
         "enable" if enabled else "disable",

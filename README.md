@@ -2,7 +2,11 @@
 
 Self-hosted companion for an existing [lloesche/valheim-server](https://github.com/lloesche/valheim-server-docker) deployment. Discover, install, configure, update, and roll back BepInEx mods from **Thunderstore** and **Hexium** without replacing the game container or touching world saves.
 
-## Deploy to another machine
+## lloesche plugin sync
+
+The manager writes mods to `/config/bepinex` (persistent) and mirrors them into the live
+`data/.../BepInEx/plugins` (and patchers) bind mounts before a Supervisor restart of
+`valheim-server`. It does **not** re-run container bootstrap or change the Valheim image.
 
 Do **not** copy this working folder as-is (`.venv`, `node_modules`, and `data/` are machine-local).
 

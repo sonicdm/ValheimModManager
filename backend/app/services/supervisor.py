@@ -183,18 +183,37 @@ def diagnose(db: Session) -> dict[str, Any]:
 
 
 def restart_server(db: Session) -> dict[str, Any]:
+    # Sync config → live BepInEx install before restarting the game process.
+    # lloesche only rsyncs plugins on BepInEx update/bootstrap; we do not modify that image.
+    from .live_sync import live_sync_available, sync_config_tree_to_live
+
+    sync_info: dict[str, Any] = {"synced": False}
+    if live_sync_available():
+        sync_info = {"synced": True, **sync_config_tree_to_live()}
+    else:
+        sync_info["warning"] = (
+            "Live plugins path not writable; restarting game only. "
+            "Mount data/.../BepInEx/plugins read-write for installs to take effect."
+        )
+        logger.warning(sync_info["warning"])
+
     proxy = _proxy(db)
     if proxy is None:
-        return {"ok": False, "message": "Supervisor not configured"}
+        return {"ok": False, "message": "Supervisor not configured", **sync_info}
     program = get_setting(db, "supervisor_program", "valheim-server") or "valheim-server"
     try:
         proxy.supervisor.stopProcess(program)
         proxy.supervisor.startProcess(program)
         info = proxy.supervisor.getProcessInfo(program)
-        return {"ok": True, "status": info.get("statename"), "message": f"Restarted {program}"}
+        return {
+            "ok": True,
+            "status": info.get("statename"),
+            "message": f"Synced plugins and restarted {program}",
+            **sync_info,
+        }
     except Exception as exc:
         logger.exception("Supervisor restart failed")
-        return {"ok": False, "message": _friendly_error(exc)}
+        return {"ok": False, "message": _friendly_error(exc), **sync_info}
 
 
 def get_tail_log(db: Session, bytes_count: int = 4096) -> str | None:

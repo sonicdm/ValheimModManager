@@ -6,21 +6,24 @@ services:
       - "8090:8090"
     volumes:
       - mod_manager_data:/data
+      # Persistent mod source of truth (lloesche /config/bepinex)
       - type: bind
         source: ${VALHEIM_BEPINEX_PATH:-H:/Games/Valheim Server/Docker/config/bepinex}
         target: /valheim/bepinex
+      # Live install dirs — writable so we can sync without touching the Valheim image.
+      # Restart uses Supervisor only; sync happens in this container first.
       - type: bind
         source: ${VALHEIM_LIVE_PLUGINS_PATH:-H:/Games/Valheim Server/Docker/data/bepinex/BepInEx/plugins}
         target: /valheim/live-plugins
-        read_only: true
+      - type: bind
+        source: ${VALHEIM_LIVE_PATCHERS_PATH:-H:/Games/Valheim Server/Docker/data/bepinex/BepInEx/patchers}
+        target: /valheim/live-patchers
     environment:
       - DATA_DIR=/data
       - BEPINEX_ROOT=/valheim/bepinex
       - LIVE_PLUGINS_ROOT=/valheim/live-plugins
       - SECRET_KEY=${MOD_MANAGER_SECRET_KEY:-change-me-in-production}
       - ADMIN_PASSWORD=${MOD_MANAGER_ADMIN_PASSWORD:-changeme}
-      # Prefer the Valheim container name on a shared Docker network (see networks below).
-      # host.docker.internal / host LAN IP often fail for container→published-port hairpin.
       - SUPERVISOR_URL=${SUPERVISOR_URL:-http://BabyGotBoar:9001}
       - SUPERVISOR_USER=${SUPERVISOR_USER:-admin}
       - SUPERVISOR_PASSWORD=${SUPERVISOR_PASSWORD:-}
@@ -38,8 +41,6 @@ volumes:
   mod_manager_data:
 
 networks:
-  # Attach to the existing Valheim compose network so we can reach BabyGotBoar:9001 directly.
-  # Find the name with: docker network ls   (often <folder>_default, e.g. docker_default)
   valheim:
     external: true
     name: ${VALHEIM_DOCKER_NETWORK:-docker_default}
