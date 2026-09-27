@@ -273,6 +273,32 @@ def scan_plugins(settings: Settings | None = None) -> list[ScannedPlugin]:
     return results
 
 
+def package_present_on_disk(pkg: InstalledPackage, settings: Settings) -> bool:
+    """True if the package folder/file still exists under plugins or .persistent."""
+    install = Path(pkg.install_path)
+    try:
+        if install.exists():
+            return True
+    except OSError:
+        pass
+
+    names = {pkg.full_name, install.name}
+    if pkg.name:
+        names.add(pkg.name)
+        names.add(pkg.name.replace(" ", ""))
+    for name in names:
+        if not name or name in (".", ".."):
+            continue
+        try:
+            if (settings.plugins_dir / name).exists():
+                return True
+            if (settings.persistent_dir / name).exists():
+                return True
+        except OSError:
+            continue
+    return False
+
+
 def persist_scan(db: Session, settings: Settings | None = None) -> list[InstalledPackage]:
     settings = settings or get_settings()
     scanned = scan_plugins(settings)
@@ -391,18 +417,25 @@ def persist_scan(db: Session, settings: Settings | None = None) -> list[Installe
 
         result_packages.append(pkg)
 
-    # Remove DB rows for paths that disappeared (only unmanaged/local auto-scanned)
+    # Drop DB rows whose files are gone — including managed Thunderstore/Hexium installs.
+    # Previously only local/unmanaged were pruned, so removed mods stayed listed forever.
+    pruned: list[str] = []
     for pkg in list(db.query(InstalledPackage).all()):
-        if pkg.install_path not in seen_paths and pkg.source in ("local", "unmanaged"):
-            db.delete(pkg)
+        if pkg.install_path in seen_paths:
+            continue
+        if package_present_on_disk(pkg, settings):
+            continue
+        pruned.append(pkg.full_name)
+        db.delete(pkg)
 
     set_setting(db, "last_scan_at", datetime.now(timezone.utc).isoformat())
     log_activity(
         db,
         "scan",
         result="ok",
-        message=f"Scanned {len(result_packages)} plugins",
-        details={"count": len(result_packages)},
+        message=f"Scanned {len(result_packages)} plugins"
+        + (f"; pruned {len(pruned)} missing" if pruned else ""),
+        details={"count": len(result_packages), "pruned": pruned},
     )
     db.commit()
     for pkg in result_packages:

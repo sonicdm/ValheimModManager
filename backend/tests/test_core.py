@@ -208,3 +208,81 @@ def test_restart_server_stop_bootstrap_start(monkeypatch):
         ("start", "valheim-bootstrap"),
         ("start", "valheim-server"),
     ]
+
+
+def test_package_present_on_disk(tmp_path: Path):
+    from app.models import InstalledPackage
+    from app.services.scanner import package_present_on_disk
+
+    plugins = tmp_path / "plugins"
+    plugins.mkdir()
+    settings = Settings(data_dir=tmp_path / "data", bepinex_root=tmp_path, live_plugins_root=None)
+
+    missing = InstalledPackage(
+        source="thunderstore",
+        full_name="Author-WebMap",
+        name="WebMap",
+        install_path=str(plugins / "Author-WebMap"),
+        managed=True,
+    )
+    assert package_present_on_disk(missing, settings) is False
+
+    (plugins / "Author-WebMap").mkdir()
+    (plugins / "Author-WebMap" / "WebMap.dll").write_bytes(b"MZ")
+    assert package_present_on_disk(missing, settings) is True
+
+
+def test_persist_scan_prunes_missing_managed(tmp_path: Path, monkeypatch):
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from app.database import Base
+    from app.models import InstalledPackage
+    from app.services import scanner as scanner_mod
+
+    plugins = tmp_path / "plugins"
+    plugins.mkdir()
+    settings = Settings(data_dir=tmp_path / "data", bepinex_root=tmp_path, live_plugins_root=None)
+    settings.data_dir.mkdir(parents=True)
+
+    engine = create_engine(f"sqlite:///{(tmp_path / 't.db').as_posix()}", future=True)
+    Base.metadata.create_all(bind=engine)
+    Session = sessionmaker(bind=engine, future=True)
+    db = Session()
+
+    stale = InstalledPackage(
+        source="thunderstore",
+        full_name="Author-WebMap",
+        name="WebMap",
+        install_path=str(plugins / "Author-WebMap"),
+        managed=True,
+        enabled=True,
+    )
+    present_dir = plugins / "KeepMe"
+    present_dir.mkdir()
+    (present_dir / "manifest.json").write_text(
+        json.dumps({"name": "KeepMe", "version_number": "1.0.0"}),
+        encoding="utf-8",
+    )
+    (present_dir / "KeepMe.dll").write_bytes(b"MZ")
+    keep = InstalledPackage(
+        source="thunderstore",
+        full_name="KeepMe",
+        name="KeepMe",
+        install_path=str(present_dir),
+        managed=True,
+        enabled=True,
+    )
+    db.add_all([stale, keep])
+    db.commit()
+
+    monkeypatch.setattr(scanner_mod, "get_settings", lambda: settings)
+    monkeypatch.setattr(scanner_mod, "set_setting", lambda *a, **k: None)
+    monkeypatch.setattr(scanner_mod, "log_activity", lambda *a, **k: None)
+
+    result = scanner_mod.persist_scan(db, settings)
+    names = {p.full_name for p in db.query(InstalledPackage).all()}
+    assert "Author-WebMap" not in names
+    assert "KeepMe" in names
+    assert any(p.full_name == "KeepMe" for p in result)
+    db.close()
