@@ -1,6 +1,7 @@
 # Combined Valheim server + Mod Manager on one Compose network.
 # Copy beside your Valheim data dirs (or adjust volume paths), set secrets, then:
-#   docker compose -f docker-compose.combined.example.yml --env-file .env up -d --build
+#   docker compose -f docker-compose.combined.example.yml --env-file .env pull
+#   docker compose -f docker-compose.combined.example.yml --env-file .env up -d
 #
 # Requires a .env with at least:
 #   MOD_MANAGER_SECRET_KEY, MOD_MANAGER_ADMIN_PASSWORD
@@ -34,7 +35,8 @@ services:
     stop_grace_period: 2m
 
   mod-manager:
-    build: .
+    image: ghcr.io/sonicdm/valheim-mod-manager:latest
+    # build: .  # uncomment only for local image development
     container_name: ValheimModManager
     depends_on:
       - valheim

@@ -1,6 +1,7 @@
 services:
   mod-manager:
-    build: .
+    image: ghcr.io/sonicdm/valheim-mod-manager:latest
+    # build: .  # uncomment only for local image development
     container_name: ValheimModManager
     ports:
       - "${MOD_MANAGER_PORT:-8090}:8090"

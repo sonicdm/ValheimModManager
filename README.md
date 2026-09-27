@@ -56,17 +56,31 @@ Do **not** mount `data/bepinex` or its `plugins`/`patchers` subfolders into the 
 
 2. On the Valheim container, enable Supervisor HTTP if you want restart control: `SUPERVISOR_HTTP=true` (and optionally `SUPERVISOR_HTTP_PASS`). Use that same password as `SUPERVISOR_PASSWORD` here — not a misnamed `SUPERVISOR_PASS`.
 
-3. Build and run:
+3. Pull and run (image: `ghcr.io/sonicdm/valheim-mod-manager:latest`):
 
 ```bash
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 ```
 
 4. Open http://localhost:8090 and sign in as `admin` with `MOD_MANAGER_ADMIN_PASSWORD`.
 
 On launch the manager runs a **one-shot plugin scan** (and refreshes package indexes) in the background, so existing mods under `config/bepinex` show up without clicking Scan first. Use **Scan plugins** anytime after you change files outside the UI.
 
-Docker builds the Python env and frontend inside the image. Persistent manager state lives in the `mod_manager_data` volume, not in the repo.
+Persistent manager state lives in the `mod_manager_data` volume, not in the repo.
+
+### Updating
+
+Merges to `main` (and git tags `v*`) publish a new image via GitHub Actions. On the server:
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+Pin a release with `image: ghcr.io/sonicdm/valheim-mod-manager:0.1.0` if you prefer not to float on `:latest`.
+
+After the first successful publish, open the GHCR package on GitHub and set visibility to **Public** so unauthenticated pulls work.
 
 ## Usage
 
@@ -138,7 +152,8 @@ One file runs [community-valheim-tools](https://github.com/community-valheim-too
 ```bash
 cp .env.example .env
 # set MOD_MANAGER_SECRET_KEY, MOD_MANAGER_ADMIN_PASSWORD, SERVER_PASS, …
-docker compose -f docker-compose.combined.example.yml --env-file .env up -d --build
+docker compose -f docker-compose.combined.example.yml --env-file .env pull
+docker compose -f docker-compose.combined.example.yml --env-file .env up -d
 ```
 
 ```yaml
@@ -169,7 +184,7 @@ services:
     stop_grace_period: 2m
 
   mod-manager:
-    build: .
+    image: ghcr.io/sonicdm/valheim-mod-manager:latest
     container_name: ValheimModManager
     depends_on:
       - valheim
@@ -201,6 +216,8 @@ Open http://localhost:8090 after BepInEx has created `config/bepinex` (first boo
 If Valheim already runs in another compose project, use the standalone `docker-compose.yml` plus an external network instead — see `docker-compose.merge.example.yml`.
 
 ## Development
+
+To hack on the manager without waiting for GHCR, uncomment `build: .` next to the `image:` line in compose and run `docker compose up -d --build`, or run the API/UI locally:
 
 ```bash
 # Backend

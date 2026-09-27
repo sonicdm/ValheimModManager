@@ -12,8 +12,8 @@
 #       # - SUPERVISOR_HTTP_PASS=...
 #
 #   mod-manager:
-#     build: /path/to/ValheimModManager
-#     # or: image: your-registry/valheim-mod-manager:latest
+#     image: ghcr.io/sonicdm/valheim-mod-manager:latest
+#     # build: /path/to/ValheimModManager  # local image development only
 #     container_name: ValheimModManager
 #     ports:
 #       - "${MOD_MANAGER_PORT:-8090}:8090"
