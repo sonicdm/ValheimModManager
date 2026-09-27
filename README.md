@@ -131,9 +131,74 @@ Lists BepInEx and mod `.cfg` files under the config tree. Open one to edit (stru
 3. Dashboard → **Restart + sync**.
 4. Edit `.cfg` under **Config** if needed, then restart again.
 
-## Merge into the Valheim compose
+## Combined Compose (server + manager)
 
-Add a sibling service that mounts `./config/bepinex` (at both `/valheim/bepinex` and `/config/bepinex`) and talks to `http://valheim:9001` (or whatever your Valheim service/`--name` is). See `docker-compose.merge.example.yml` for a sibling of `ghcr.io/community-valheim-tools/valheim-server`.
+One file runs [community-valheim-tools](https://github.com/community-valheim-tools/valheim-server-docker) and this manager on the same Docker network. Copy `docker-compose.combined.example.yml`, put `config/` and `data/` next to it (or edit the volume paths), fill `.env`, then:
+
+```bash
+cp .env.example .env
+# set MOD_MANAGER_SECRET_KEY, MOD_MANAGER_ADMIN_PASSWORD, SERVER_PASS, …
+docker compose -f docker-compose.combined.example.yml --env-file .env up -d --build
+```
+
+```yaml
+services:
+  valheim:
+    image: ghcr.io/community-valheim-tools/valheim-server
+    container_name: valheim
+    cap_add:
+      - sys_nice
+    volumes:
+      - ./config:/config
+      - ./data:/opt/valheim
+    ports:
+      - "2456-2458:2456-2458/udp"
+      - "9001:9001/tcp"   # Supervisor HTTP (LAN only)
+    environment:
+      - SERVER_NAME=${SERVER_NAME:-My Server}
+      - WORLD_NAME=${WORLD_NAME:-Dedicated}
+      - SERVER_PASS=${SERVER_PASS:-secret}
+      - SERVER_PUBLIC=${SERVER_PUBLIC:-0}
+      - TZ=${TIMEZONE:-America/Los_Angeles}
+      - BEPINEX=true
+      - SUPERVISOR_HTTP=true
+      - SUPERVISOR_HTTP_PORT=9001
+      - SUPERVISOR_HTTP_USER=admin
+      - SUPERVISOR_HTTP_PASS=${SUPERVISOR_HTTP_PASS:-}
+    restart: unless-stopped
+    stop_grace_period: 2m
+
+  mod-manager:
+    build: .
+    container_name: ValheimModManager
+    depends_on:
+      - valheim
+    ports:
+      - "${MOD_MANAGER_PORT:-8090}:8090"
+    volumes:
+      - mod_manager_data:/data
+      - ./config/bepinex:/valheim/bepinex
+      - ./config/bepinex:/config/bepinex
+    environment:
+      - DATA_DIR=/data
+      - BEPINEX_ROOT=/valheim/bepinex
+      - SECRET_KEY=${MOD_MANAGER_SECRET_KEY}
+      - ADMIN_PASSWORD=${MOD_MANAGER_ADMIN_PASSWORD:-changeme}
+      - SUPERVISOR_URL=http://valheim:9001
+      - SUPERVISOR_USER=admin
+      - SUPERVISOR_PASSWORD=${SUPERVISOR_HTTP_PASS:-}
+      - SUPERVISOR_PROGRAM=valheim-server
+      - CONTAINER_DISPLAY_NAME=valheim
+      - TIMEZONE=${TIMEZONE:-America/Los_Angeles}
+    restart: unless-stopped
+
+volumes:
+  mod_manager_data:
+```
+
+Open http://localhost:8090 after BepInEx has created `config/bepinex` (first boot with `BEPINEX=true`). Do **not** bind-mount `data/bepinex`.
+
+If Valheim already runs in another compose project, use the standalone `docker-compose.yml` plus an external network instead — see `docker-compose.merge.example.yml`.
 
 ## Development
 

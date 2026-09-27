@@ -1,0 +1,62 @@
+# Combined Valheim server + Mod Manager on one Compose network.
+# Copy beside your Valheim data dirs (or adjust volume paths), set secrets, then:
+#   docker compose -f docker-compose.combined.example.yml --env-file .env up -d --build
+#
+# Requires a .env with at least:
+#   MOD_MANAGER_SECRET_KEY, MOD_MANAGER_ADMIN_PASSWORD
+# Optional: SERVER_NAME, WORLD_NAME, SERVER_PASS, SUPERVISOR_HTTP_PASS, TIMEZONE, MOD_MANAGER_PORT
+
+services:
+  valheim:
+    image: ghcr.io/community-valheim-tools/valheim-server
+    container_name: valheim
+    cap_add:
+      - sys_nice
+    volumes:
+      - ./config:/config
+      - ./data:/opt/valheim
+    ports:
+      - "2456-2458:2456-2458/udp"
+      # Supervisor HTTP for Restart + sync (LAN only; do not expose publicly)
+      - "9001:9001/tcp"
+    environment:
+      - SERVER_NAME=${SERVER_NAME:-My Server}
+      - WORLD_NAME=${WORLD_NAME:-Dedicated}
+      - SERVER_PASS=${SERVER_PASS:-secret}
+      - SERVER_PUBLIC=${SERVER_PUBLIC:-0}
+      - TZ=${TIMEZONE:-America/Los_Angeles}
+      - BEPINEX=true
+      - SUPERVISOR_HTTP=true
+      - SUPERVISOR_HTTP_PORT=9001
+      - SUPERVISOR_HTTP_USER=admin
+      - SUPERVISOR_HTTP_PASS=${SUPERVISOR_HTTP_PASS:-}
+    restart: unless-stopped
+    stop_grace_period: 2m
+
+  mod-manager:
+    build: .
+    container_name: ValheimModManager
+    depends_on:
+      - valheim
+    ports:
+      - "${MOD_MANAGER_PORT:-8090}:8090"
+    volumes:
+      - mod_manager_data:/data
+      # Same host tree twice so persistent-package symlinks use /config/bepinex/...
+      - ./config/bepinex:/valheim/bepinex
+      - ./config/bepinex:/config/bepinex
+    environment:
+      - DATA_DIR=/data
+      - BEPINEX_ROOT=/valheim/bepinex
+      - SECRET_KEY=${MOD_MANAGER_SECRET_KEY:?set MOD_MANAGER_SECRET_KEY}
+      - ADMIN_PASSWORD=${MOD_MANAGER_ADMIN_PASSWORD:-changeme}
+      - SUPERVISOR_URL=http://valheim:9001
+      - SUPERVISOR_USER=admin
+      - SUPERVISOR_PASSWORD=${SUPERVISOR_HTTP_PASS:-}
+      - SUPERVISOR_PROGRAM=valheim-server
+      - CONTAINER_DISPLAY_NAME=valheim
+      - TIMEZONE=${TIMEZONE:-America/Los_Angeles}
+    restart: unless-stopped
+
+volumes:
+  mod_manager_data:

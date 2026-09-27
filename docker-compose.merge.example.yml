@@ -1,5 +1,5 @@
-# Example: add the manager as a sibling of community-valheim-tools Valheim.
-# (Same layout/ABI as the former lloesche image.)
+# Example: add the manager as a sibling when Valheim already has its own compose.
+# Prefer docker-compose.combined.example.yml when starting both services together.
 # Adjust container/service names and host paths to match your Valheim compose.
 #
 # services:
