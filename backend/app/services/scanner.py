@@ -310,6 +310,38 @@ def persist_scan(db: Session, settings: Settings | None = None) -> list[Installe
         for cfg in item.config_files:
             pkg.configs.append(ConfigAssociation(relative_path=cfg))
 
+        # Auto-link local/unmanaged packages to Thunderstore/Hexium when unambiguous
+        if pkg.source in ("local", "unmanaged"):
+            try:
+                from .packages import match_installed_to_remote
+
+                matched = match_installed_to_remote(
+                    db,
+                    full_name=pkg.full_name,
+                    name=pkg.name,
+                    owner=pkg.owner,
+                    version=pkg.version,
+                )
+                if matched:
+                    src, info = matched
+                    pkg.source = src
+                    pkg.full_name = info.full_name
+                    pkg.owner = info.owner or pkg.owner
+                    pkg.managed = True
+                    pkg.package_url = info.package_url
+                    pkg.icon_url = info.icon_url or pkg.icon_url
+                    pkg.description = info.description or pkg.description
+                    if info.latest:
+                        # Keep installed version; only fill deps from matching or latest
+                        ver = next(
+                            (v for v in info.versions if v.version_number == pkg.version),
+                            info.latest,
+                        )
+                        pkg.dependencies_json = json.dumps(ver.dependencies)
+            except Exception:
+                # Matching is best-effort; never fail the scan
+                pass
+
         result_packages.append(pkg)
 
     # Remove DB rows for paths that disappeared (only unmanaged/local auto-scanned)

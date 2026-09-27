@@ -1,14 +1,20 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, InstalledPackage } from "../api/client";
+import { api, InstalledPackage, Package } from "../api/client";
+
+type LinkForm = {
+  id: number;
+  source: string;
+  full_name: string;
+  query: string;
+};
 
 export default function InstalledPage() {
   const [packages, setPackages] = useState<InstalledPackage[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<number | null>(null);
-  const [linkForm, setLinkForm] = useState<{ id: number; source: string; full_name: string } | null>(
-    null,
-  );
+  const [linkForm, setLinkForm] = useState<LinkForm | null>(null);
+  const [suggestions, setSuggestions] = useState<Package[]>([]);
 
   const load = useCallback(async () => {
     setPackages(await api.get<InstalledPackage[]>("/api/plugins"));
@@ -17,6 +23,27 @@ export default function InstalledPage() {
   useEffect(() => {
     load().catch((e) => setError(e.message));
   }, [load]);
+
+  useEffect(() => {
+    if (!linkForm) {
+      setSuggestions([]);
+      return;
+    }
+    const q = linkForm.query.trim();
+    if (q.length < 2) {
+      setSuggestions([]);
+      return;
+    }
+    const handle = setTimeout(() => {
+      const params = new URLSearchParams({ q, limit: "12" });
+      if (linkForm.source) params.set("source", linkForm.source);
+      api
+        .get<Package[]>(`/api/packages?${params}`)
+        .then(setSuggestions)
+        .catch(() => setSuggestions([]));
+    }, 250);
+    return () => clearTimeout(handle);
+  }, [linkForm?.query, linkForm?.source, linkForm]);
 
   async function act(id: number, fn: () => Promise<unknown>) {
     setBusy(id);
@@ -31,20 +58,48 @@ export default function InstalledPage() {
     }
   }
 
+  function openLink(pkg: InstalledPackage) {
+    const preferred =
+      pkg.source === "thunderstore" || pkg.source === "hexium" ? pkg.source : "thunderstore";
+    setLinkForm({
+      id: pkg.id,
+      source: preferred,
+      full_name: pkg.full_name.includes("-") ? pkg.full_name : pkg.full_name,
+      query: pkg.name || pkg.full_name,
+    });
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h2 className="font-display text-3xl">Installed mods</h2>
-          <p className="text-sm text-bark/70">Managed Thunderstore/Hexium packages and unmanaged plugins.</p>
+          <p className="text-sm text-bark/70">
+            Link local/unmanaged plugins to Thunderstore or Hexium for updates. Rescan auto-matches when
+            possible.
+          </p>
         </div>
-        <button
-          type="button"
-          onClick={() => act(-1, () => api.post("/api/scan")).then(load)}
-          className="rounded-md bg-moss px-3 py-2 text-sm text-paper"
-        >
-          Rescan
-        </button>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() =>
+              act(-1, async () => {
+                await api.post("/api/packages/refresh");
+                await api.post("/api/scan");
+              })
+            }
+            className="rounded-md border border-bark/20 bg-paper px-3 py-2 text-sm"
+          >
+            Refresh indexes + scan
+          </button>
+          <button
+            type="button"
+            onClick={() => act(-1, () => api.post("/api/scan"))}
+            className="rounded-md bg-moss px-3 py-2 text-sm text-paper"
+          >
+            Rescan
+          </button>
+        </div>
       </div>
       {error && <p className="text-sm text-danger">{error}</p>}
 
@@ -72,6 +127,11 @@ export default function InstalledPage() {
                 <td className="px-4 py-3">{pkg.version || "—"}</td>
                 <td className="px-4 py-3">
                   <span className="rounded-full bg-mist px-2 py-0.5 text-xs">{pkg.source}</span>
+                  {pkg.source === "local" && (
+                    <span className="ml-1 rounded-full bg-sea/15 px-2 py-0.5 text-xs text-sea">
+                      not linked
+                    </span>
+                  )}
                   {!pkg.managed && (
                     <span className="ml-1 rounded-full bg-ember/15 px-2 py-0.5 text-xs text-ember">
                       unmanaged
@@ -116,17 +176,15 @@ export default function InstalledPage() {
                         Configure
                       </Link>
                     )}
-                    {!pkg.managed && (
-                      <button
-                        type="button"
-                        className="rounded border border-sea/30 px-2 py-1 text-xs text-sea"
-                        onClick={() =>
-                          setLinkForm({ id: pkg.id, source: "hexium", full_name: pkg.full_name })
-                        }
-                      >
-                        Link
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      className="rounded border border-sea/30 px-2 py-1 text-xs text-sea"
+                      onClick={() => openLink(pkg)}
+                    >
+                      {pkg.source === "thunderstore" || pkg.source === "hexium"
+                        ? "Change store"
+                        : "Link store"}
+                    </button>
                     {pkg.managed && (
                       <button
                         type="button"
@@ -152,7 +210,7 @@ export default function InstalledPage() {
       {linkForm && (
         <div className="fixed inset-0 z-20 grid place-items-center bg-ink/40 p-4">
           <form
-            className="w-full max-w-md rounded-2xl bg-paper p-6"
+            className="w-full max-w-lg rounded-2xl bg-paper p-6"
             onSubmit={(e) => {
               e.preventDefault();
               act(linkForm.id, () =>
@@ -163,24 +221,65 @@ export default function InstalledPage() {
               ).then(() => setLinkForm(null));
             }}
           >
-            <h3 className="font-display text-2xl">Link to package</h3>
+            <h3 className="font-display text-2xl">Link to store package</h3>
+            <p className="mt-1 text-xs text-bark/60">
+              Pick Thunderstore or Hexium. Search and click a result, or type Team-Mod exactly.
+            </p>
             <label className="mt-4 block text-sm">
-              Source
+              Store
               <select
                 className="mt-1 w-full rounded border border-bark/20 px-3 py-2"
                 value={linkForm.source}
                 onChange={(e) => setLinkForm({ ...linkForm, source: e.target.value })}
               >
-                <option value="hexium">Hexium</option>
                 <option value="thunderstore">Thunderstore</option>
+                <option value="hexium">Hexium</option>
               </select>
             </label>
+            <label className="mt-3 block text-sm">
+              Search
+              <input
+                className="mt-1 w-full rounded border border-bark/20 px-3 py-2"
+                value={linkForm.query}
+                onChange={(e) => setLinkForm({ ...linkForm, query: e.target.value })}
+                placeholder="Jotunn, PortalAtlas…"
+              />
+            </label>
+            {suggestions.length > 0 && (
+              <ul className="mt-2 max-h-48 overflow-auto rounded border border-bark/15 text-sm">
+                {suggestions.map((s) => (
+                  <li key={`${s.source}:${s.full_name}`}>
+                    <button
+                      type="button"
+                      className="flex w-full items-start gap-2 px-3 py-2 text-left hover:bg-mist"
+                      onClick={() =>
+                        setLinkForm({
+                          ...linkForm,
+                          source: s.source,
+                          full_name: s.full_name,
+                          query: s.full_name,
+                        })
+                      }
+                    >
+                      <span className="rounded bg-mist px-1.5 text-[10px] uppercase">{s.source}</span>
+                      <span>
+                        <span className="font-medium">{s.full_name}</span>
+                        <span className="block text-xs text-bark/60">
+                          {s.latest_version} · {s.downloads.toLocaleString()} downloads
+                        </span>
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
             <label className="mt-3 block text-sm">
               Full name (Team-Mod)
               <input
                 className="mt-1 w-full rounded border border-bark/20 px-3 py-2"
                 value={linkForm.full_name}
                 onChange={(e) => setLinkForm({ ...linkForm, full_name: e.target.value })}
+                required
               />
             </label>
             <div className="mt-4 flex justify-end gap-2">
@@ -188,7 +287,7 @@ export default function InstalledPage() {
                 Cancel
               </button>
               <button type="submit" className="rounded-md bg-moss px-3 py-2 text-sm text-paper">
-                Link
+                Save link
               </button>
             </div>
           </form>

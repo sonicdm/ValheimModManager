@@ -387,21 +387,33 @@ def link_package(
     pkg = db.get(InstalledPackage, package_id)
     if pkg is None:
         raise ValueError("Package not found")
+    if source not in ("thunderstore", "hexium"):
+        raise ValueError("Source must be thunderstore or hexium")
     info = get_package(source, full_name)
     if info is None:
-        raise ValueError("Remote package not found")
-    ver = version or (info.latest.version_number if info.latest else pkg.version)
+        raise ValueError(
+            f"Remote package not found on {source}: {full_name}. Refresh package indexes first."
+        )
+    # Keep the installed on-disk version unless caller overrides
+    ver = version or pkg.version
+    if ver and not any(v.version_number == ver for v in info.versions):
+        # Still allow link; version may be a fork / slightly different
+        pass
+    if not ver and info.latest:
+        ver = info.latest.version_number
     pkg.source = source
     pkg.full_name = full_name
     pkg.name = info.name
     pkg.owner = info.owner
-    pkg.version = ver
+    if ver:
+        pkg.version = ver
     pkg.managed = True
     pkg.package_url = info.package_url
     pkg.icon_url = info.icon_url
     pkg.description = info.description
-    if info.latest:
-        pkg.dependencies_json = json.dumps(info.latest.dependencies)
+    matched = next((v for v in info.versions if v.version_number == ver), info.latest)
+    if matched:
+        pkg.dependencies_json = json.dumps(matched.dependencies)
     log_activity(db, "link", package=full_name, source=source, result="ok")
     db.commit()
     db.refresh(pkg)

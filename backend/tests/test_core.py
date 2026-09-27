@@ -74,7 +74,32 @@ def test_scanner_loose_dll(tmp_path: Path):
     assert any(r.full_name == "ServerDevcommands" and r.managed is False for r in results)
 
 
-def test_config_parse_and_roundtrip():
+def test_match_installed_to_remote_by_full_name(tmp_path, monkeypatch):
+    from app.services import packages as pkgmod
+    from app.services.packages import PackageInfo, PackageVersion, match_installed_to_remote
+
+    jotunn = PackageInfo(
+        source="thunderstore",
+        name="Jotunn",
+        full_name="ValheimModding-Jotunn",
+        owner="ValheimModding",
+        versions=[PackageVersion(version_number="2.30.2", download_url="http://x")],
+    )
+    monkeypatch.setattr(pkgmod, "enabled_sources", lambda db: ["thunderstore", "hexium"])
+    monkeypatch.setattr(
+        pkgmod,
+        "get_cached_packages",
+        lambda source: {"ValheimModding-Jotunn": jotunn} if source == "thunderstore" else {},
+    )
+    matched = match_installed_to_remote(
+        db=None,  # type: ignore[arg-type]
+        full_name="ValheimModding-Jotunn",
+        name="Jotunn",
+        version="2.30.2",
+    )
+    assert matched is not None
+    assert matched[0] == "thunderstore"
+    assert matched[1].full_name == "ValheimModding-Jotunn"
     raw = """## Settings file
 [General]
 

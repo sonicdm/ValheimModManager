@@ -200,6 +200,71 @@ def get_package(source: str, full_name: str) -> PackageInfo | None:
     return get_cached_packages(source).get(full_name)
 
 
+def match_installed_to_remote(
+    db: Session,
+    *,
+    full_name: str,
+    name: str | None = None,
+    owner: str | None = None,
+    version: str | None = None,
+    prefer_source: str | None = None,
+) -> tuple[str, PackageInfo] | None:
+    """Best-effort match of an on-disk package to Thunderstore/Hexium.
+
+    Prefers exact Team-Mod full_name, then owner+name, then unique name match.
+    If both stores have it, prefer prefer_source, else the one whose versions
+    include the installed version, else the first enabled source that matches.
+    """
+    candidates: list[tuple[str, PackageInfo]] = []
+    sources = enabled_sources(db)
+    if prefer_source and prefer_source in sources:
+        sources = [prefer_source] + [s for s in sources if s != prefer_source]
+
+    for src in sources:
+        cache = get_cached_packages(src)
+        if full_name in cache:
+            candidates.append((src, cache[full_name]))
+            continue
+        # Folder sometimes is Team-Mod already
+        if owner and name:
+            key = f"{owner}-{name}"
+            if key in cache:
+                candidates.append((src, cache[key]))
+                continue
+        # Unique match by package name
+        name_matches = [p for p in cache.values() if p.name.lower() == (name or full_name).lower()]
+        if len(name_matches) == 1:
+            candidates.append((src, name_matches[0]))
+
+    if not candidates:
+        # Broader: name contained in full_name
+        needle = (name or full_name).lower().replace(" ", "")
+        for src in sources:
+            fuzzy = [
+                p
+                for p in get_cached_packages(src).values()
+                if p.name.lower().replace(" ", "") == needle
+                or p.full_name.lower().endswith("-" + needle)
+                or p.full_name.lower() == needle
+            ]
+            if len(fuzzy) == 1:
+                candidates.append((src, fuzzy[0]))
+
+    if not candidates:
+        return None
+
+    if version:
+        versioned = [
+            (s, p)
+            for s, p in candidates
+            if any(v.version_number == version for v in p.versions)
+        ]
+        if versioned:
+            return versioned[0]
+
+    return candidates[0]
+
+
 def find_package_any_source(db: Session, dependency: str) -> tuple[str, PackageInfo, PackageVersion] | None:
     """Resolve Team-Mod-Version dependency string across enabled sources."""
     parts = dependency.rsplit("-", 2)
