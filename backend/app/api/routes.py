@@ -4,7 +4,7 @@ import json
 from datetime import datetime
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile
 from sqlalchemy.orm import Session
 
 from ..auth.security import (
@@ -401,6 +401,19 @@ def patch_plugin(
     return _pkg_out(pkg)
 
 
+@router.get("/packages/categories")
+def package_categories(
+    user: Annotated[AdminUser, Depends(_auth_user)],
+    db: Annotated[Session, Depends(get_db)],
+    source: str | None = None,
+) -> dict:
+    return {
+        "categories": package_service.list_categories(db, source=source or None),
+        "default_include": package_service.DEFAULT_SERVER_INCLUDE,
+        "default_exclude": [],
+    }
+
+
 @router.get("/packages", response_model=list[PackageOut])
 def search_packages(
     user: Annotated[AdminUser, Depends(_auth_user)],
@@ -408,13 +421,23 @@ def search_packages(
     q: str = "",
     source: str | None = None,
     category: str | None = None,
+    include: Annotated[list[str] | None, Query()] = None,
+    exclude: Annotated[list[str] | None, Query()] = None,
     sort: str = "downloads",
     limit: int = 50,
     offset: int = 0,
 ) -> list[PackageOut]:
     installed = {p.full_name: p for p in db.query(InstalledPackage).all()}
     results = package_service.search_packages(
-        db, query=q, source=source, category=category, sort=sort, limit=limit, offset=offset
+        db,
+        query=q,
+        source=source,
+        category=category,
+        include=include,
+        exclude=exclude,
+        sort=sort,
+        limit=limit,
+        offset=offset,
     )
     outs: list[PackageOut] = []
     for pkg in results:

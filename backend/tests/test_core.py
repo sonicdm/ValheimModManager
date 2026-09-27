@@ -210,6 +210,39 @@ def test_restart_server_stop_bootstrap_start(monkeypatch):
     ]
 
 
+def test_category_include_exclude_filters():
+    from app.services.packages import PackageInfo, _matches_category_filters
+
+    server = PackageInfo(
+        source="thunderstore",
+        name="WebMap",
+        full_name="a-WebMap",
+        owner="a",
+        categories=["Server-side", "Mods"],
+    )
+    client = PackageInfo(
+        source="thunderstore",
+        name="UI",
+        full_name="a-UI",
+        owner="a",
+        categories=["Client-side"],
+    )
+    both = PackageInfo(
+        source="hexium",
+        name="QoL",
+        full_name="a-QoL",
+        owner="a",
+        categories=["Client & Server", "Quality of Life"],
+    )
+
+    assert _matches_category_filters(server, include=["Server-side"], exclude=[])
+    assert not _matches_category_filters(client, include=["Server-side"], exclude=[])
+    assert _matches_category_filters(both, include=["Client & Server", "Server-side"], exclude=[])
+    assert not _matches_category_filters(server, include=[], exclude=["Server-side"])
+    assert _matches_category_filters(client, include=[], exclude=["Server-side"])
+    assert _matches_category_filters(server, include=[], exclude=[])
+
+
 def test_job_scan_plugins_runs_persist_scan(monkeypatch):
     from app.services import updates as updates_mod
 

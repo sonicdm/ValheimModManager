@@ -54,6 +54,24 @@ class PackageInfo:
 _CACHE: dict[str, dict[str, PackageInfo]] = {}
 _CACHE_PATH_NAME = "package_index.json"
 
+# Thunderstore and Hexium use different category names for dedicated-server relevance.
+SERVER_AUDIENCE_CATEGORIES = frozenset(
+    {
+        "Server-side",
+        "Server-only",
+        "Client & Server",
+        "Client (& Server)",
+    }
+)
+CLIENT_AUDIENCE_CATEGORIES = frozenset(
+    {
+        "Client-side",
+        "Client-only",
+    }
+)
+
+DEFAULT_SERVER_INCLUDE = sorted(SERVER_AUDIENCE_CATEGORIES)
+
 
 def source_api_url(source: str) -> str:
     settings = get_settings()
@@ -157,12 +175,46 @@ def enabled_sources(db: Session) -> list[str]:
     return sources
 
 
+def _matches_category_filters(
+    pkg: PackageInfo,
+    *,
+    include: list[str] | None,
+    exclude: list[str] | None,
+) -> bool:
+    cats = set(pkg.categories)
+    include_set = {c for c in (include or []) if c}
+    exclude_set = {c for c in (exclude or []) if c}
+    if include_set and not (cats & include_set):
+        return False
+    if exclude_set and (cats & exclude_set):
+        return False
+    return True
+
+
+def list_categories(db: Session, *, source: str | None = None) -> list[dict[str, Any]]:
+    """Return categories present in the cached indexes, with package counts."""
+    sources = [source] if source else enabled_sources(db)
+    counts: dict[str, int] = {}
+    for src in sources:
+        for pkg in get_cached_packages(src).values():
+            if pkg.is_deprecated:
+                continue
+            for cat in pkg.categories:
+                counts[cat] = counts.get(cat, 0) + 1
+    return [
+        {"name": name, "count": counts[name]}
+        for name in sorted(counts.keys(), key=lambda n: (-counts[n], n.lower()))
+    ]
+
+
 def search_packages(
     db: Session,
     *,
     query: str = "",
     source: str | None = None,
     category: str | None = None,
+    include: list[str] | None = None,
+    exclude: list[str] | None = None,
     sort: str = "downloads",
     limit: int = 50,
     offset: int = 0,
@@ -170,20 +222,28 @@ def search_packages(
     sources = [source] if source else enabled_sources(db)
     packages: list[PackageInfo] = []
     q = query.strip().lower()
+    include_list = list(include or [])
+    exclude_list = list(exclude or [])
+    # Back-compat: single category acts as include
+    if category and category.strip() and category.strip() not in include_list:
+        include_list.append(category.strip())
     for src in sources:
         for pkg in get_cached_packages(src).values():
             if pkg.is_deprecated:
                 continue
-            if category and category not in pkg.categories:
+            if not _matches_category_filters(pkg, include=include_list, exclude=exclude_list):
                 continue
-            if q and q not in pkg.full_name.lower() and q not in (pkg.description or "").lower() and q not in pkg.owner.lower():
+            if (
+                q
+                and q not in pkg.full_name.lower()
+                and q not in (pkg.description or "").lower()
+                and q not in pkg.owner.lower()
+            ):
                 continue
             packages.append(pkg)
 
-    reverse = True
     if sort == "name":
-        packages.sort(key=lambda p: p.full_name.lower(), reverse=False)
-        reverse = False
+        packages.sort(key=lambda p: p.full_name.lower())
     elif sort == "updated":
         packages.sort(key=lambda p: p.date_updated or "", reverse=True)
     elif sort == "rating":
@@ -191,8 +251,6 @@ def search_packages(
     else:
         packages.sort(key=lambda p: p.downloads, reverse=True)
 
-    if reverse and sort == "name":
-        pass
     return packages[offset : offset + limit]
 
 
