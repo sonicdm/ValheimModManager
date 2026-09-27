@@ -1,6 +1,8 @@
 # Valheim Mod Manager
 
-Self-hosted companion for an existing [lloesche/valheim-server](https://github.com/lloesche/valheim-server-docker) deployment. Discover, install, configure, update, and roll back BepInEx mods from **Thunderstore** and **Hexium** without replacing the game container or touching world saves.
+Self-hosted companion for an existing [community-valheim-tools/valheim-server](https://github.com/community-valheim-tools/valheim-server-docker) deployment (`ghcr.io/community-valheim-tools/valheim-server`). Discover, install, configure, update, and roll back BepInEx mods from **Thunderstore** and **Hexium** without replacing the game container or touching world saves.
+
+That image is the relocated home of the former [lloesche/valheim-server-docker](https://github.com/lloesche/valheim-server-docker) project (same layout and Supervisor ABI). Legacy `ghcr.io/lloesche/valheim-server` tags remain compatible until they disappear.
 
 ## Screenshots
 
@@ -18,9 +20,9 @@ Self-hosted companion for an existing [lloesche/valheim-server](https://github.c
 | --- | --- |
 | ![Settings](docs/screenshots/settings.png) | ![Sign in](docs/screenshots/login.png) |
 
-## How it fits the vanilla image
+## How it fits the Valheim image
 
-With `BEPINEX=true`, lloesche keeps a persistent tree under `/config/bepinex` and syncs plugins/patchers into `/opt/valheim/bepinex/BepInEx/` during `valheim-bootstrap` (container start and BepInEx install/update). The manager:
+With `BEPINEX=true`, the server image keeps a persistent tree under `/config/bepinex` and syncs plugins/patchers into `/opt/valheim/bepinex/BepInEx/` during `valheim-bootstrap` (container start and BepInEx install/update). The manager:
 
 1. Writes installs to the **config** mount (`.../config/bepinex`)
 2. Applies changes by stopping `valheim-server`, running `valheim-bootstrap`, then starting `valheim-server` again — it does **not** bind-mount or write `data/bepinex`
@@ -30,7 +32,7 @@ Do **not** copy this working folder as-is (`.venv`, `node_modules`, and `data/` 
 
 ## Quick start (standalone Compose)
 
-1. Clone and configure paths for **your** host (vanilla layout shown):
+1. Clone and configure paths for **your** host (CVT / former lloesche layout shown):
 
 ```bash
 git clone https://github.com/sonicdm/ValheimModManager.git
@@ -131,7 +133,7 @@ Lists BepInEx and mod `.cfg` files under the config tree. Open one to edit (stru
 
 ## Merge into the Valheim compose
 
-Add a sibling service that mounts `./config/bepinex` (at both `/valheim/bepinex` and `/config/bepinex`) and talks to `http://valheim:9001` (or whatever your Valheim service/`--name` is). See `docker-compose.merge.example.yml`.
+Add a sibling service that mounts `./config/bepinex` (at both `/valheim/bepinex` and `/config/bepinex`) and talks to `http://valheim:9001` (or whatever your Valheim service/`--name` is). See `docker-compose.merge.example.yml` for a sibling of `ghcr.io/community-valheim-tools/valheim-server`.
 
 ## Development
 

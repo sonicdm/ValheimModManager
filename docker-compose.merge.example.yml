@@ -1,9 +1,10 @@
-# Example: add the manager as a sibling of the vanilla lloesche Valheim service.
+# Example: add the manager as a sibling of community-valheim-tools Valheim.
+# (Same layout/ABI as the former lloesche image.)
 # Adjust container/service names and host paths to match your Valheim compose.
 #
 # services:
 #   valheim:
-#     image: ghcr.io/lloesche/valheim-server
+#     image: ghcr.io/community-valheim-tools/valheim-server
 #     # ... existing Valheim service unchanged ...
 #     environment:
 #       - BEPINEX=true
