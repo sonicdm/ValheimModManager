@@ -58,7 +58,8 @@ docker compose up -d --build
 ```
 
 4. Open http://localhost:8090 and sign in as `admin` with `MOD_MANAGER_ADMIN_PASSWORD`.
-5. Click **Scan plugins** on the dashboard.
+
+On launch the manager runs a **one-shot plugin scan** (and refreshes package indexes) in the background, so existing mods under `config/bepinex` show up without clicking Scan first. Use **Scan plugins** anytime after you change files outside the UI.
 
 Docker builds the Python env and frontend inside the image. Persistent manager state lives in the `mod_manager_data` volume, not in the repo.
 
@@ -68,7 +69,7 @@ After login you get seven pages. Day-to-day work is mostly **Discover → Instal
 
 ### Dashboard
 
-- **Scan plugins** — Walks `config/bepinex` and updates the managed list. Prunes packages that disappeared from disk. Run this after first setup and whenever you change files outside the UI.
+- **Scan plugins** — Walks `config/bepinex` and updates the managed list. Prunes packages that disappeared from disk. Also runs once automatically when the manager process starts; use the button after you change files outside the UI.
 - **Check updates** — Compares installed managed mods against Thunderstore/Hexium indexes and shows pending updates.
 - **Restart + sync** — Stops `valheim-server`, runs `valheim-bootstrap` (copies plugins/patchers into the live BepInEx tree), then starts the server again. Use this after installs, uninstalls, config changes that need a reload, or **Make persistent**.
 

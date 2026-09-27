@@ -210,6 +210,27 @@ def test_restart_server_stop_bootstrap_start(monkeypatch):
     ]
 
 
+def test_job_scan_plugins_runs_persist_scan(monkeypatch):
+    from app.services import updates as updates_mod
+
+    called: list[object] = []
+
+    class FakeSession:
+        def close(self):
+            called.append("close")
+
+    monkeypatch.setattr(updates_mod, "get_session", lambda: FakeSession())
+    monkeypatch.setattr(
+        updates_mod,
+        "persist_scan",
+        lambda db: (called.append(("scan", db)) or ([], [])),
+    )
+
+    updates_mod.job_scan_plugins()
+    assert called[0][0] == "scan"
+    assert called[-1] == "close"
+
+
 def test_safe_extract_recovers_when_file_blocks_directory(tmp_path: Path):
     import zipfile
     from app.services.installer import _safe_extract

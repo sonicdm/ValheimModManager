@@ -12,11 +12,32 @@ from ..models import InstalledPackage, PendingUpdate
 from .backup import create_backup
 from .installer import install_packages
 from .packages import enabled_sources, get_package, refresh_source
+from .scanner import persist_scan
 from .settings_service import get_setting, log_activity, set_setting
 from .supervisor import get_process_status, restart_server, supervisor_configured
 
 logger = logging.getLogger(__name__)
 scheduler = AsyncIOScheduler()
+
+
+def job_scan_plugins() -> None:
+    """One-shot disk scan (used at process start)."""
+    db = get_session()
+    try:
+        packages, pruned = persist_scan(db)
+        logger.info(
+            "Plugin scan finished: %s on disk%s",
+            len(packages),
+            f", pruned {len(pruned)}" if pruned else "",
+        )
+    except Exception:
+        logger.exception("Plugin scan failed")
+        try:
+            log_activity(db, "scan", result="error", message="Startup/scheduled scan failed")
+        except Exception:
+            logger.exception("Could not log scan failure")
+    finally:
+        db.close()
 
 
 async def job_refresh_packages() -> None:

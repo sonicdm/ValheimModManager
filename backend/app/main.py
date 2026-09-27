@@ -16,7 +16,13 @@ from .config import get_settings
 from .database import get_session, init_db
 from .models import Setting
 from .services.settings_service import set_setting
-from .services.updates import configure_scheduler, job_refresh_packages, scheduler, shutdown_scheduler
+from .services.updates import (
+    configure_scheduler,
+    job_refresh_packages,
+    job_scan_plugins,
+    scheduler,
+    shutdown_scheduler,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("valheim_mod_manager")
@@ -53,7 +59,11 @@ async def lifespan(app: FastAPI):
         db.close()
 
     configure_scheduler()
-    # Kick off an initial package index refresh without blocking startup
+    # One-shot jobs at boot — do not block the lifespan handshake.
+    try:
+        scheduler.add_job(job_scan_plugins, id="scan_plugins_startup", replace_existing=True)
+    except Exception:
+        logger.exception("Could not schedule startup plugin scan")
     try:
         scheduler.add_job(job_refresh_packages, id="refresh_packages_startup", replace_existing=True)
     except Exception:
