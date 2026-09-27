@@ -66,3 +66,85 @@ body {
   width: 40%;
   animation: install-indeterminate 1.4s ease-in-out infinite;
 }
+
+.package-docs {
+  line-height: 1.55;
+}
+.package-docs h1,
+.package-docs h2,
+.package-docs h3,
+.package-docs h4 {
+  font-family: var(--font-display);
+  color: var(--color-ink);
+  margin: 1.1em 0 0.45em;
+  line-height: 1.25;
+}
+.package-docs h1 {
+  font-size: 1.6rem;
+}
+.package-docs h2 {
+  font-size: 1.3rem;
+  border-bottom: 1px solid color-mix(in oklab, var(--color-bark) 15%, transparent);
+  padding-bottom: 0.25rem;
+}
+.package-docs h3 {
+  font-size: 1.1rem;
+}
+.package-docs p,
+.package-docs ul,
+.package-docs ol {
+  margin: 0.55em 0;
+}
+.package-docs ul,
+.package-docs ol {
+  padding-left: 1.35rem;
+}
+.package-docs a {
+  color: var(--color-sea);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.package-docs img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 0.5rem;
+  margin: 0.5rem 0;
+}
+.package-docs pre,
+.package-docs code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.85em;
+}
+.package-docs pre {
+  overflow-x: auto;
+  padding: 0.75rem 1rem;
+  border-radius: 0.5rem;
+  background: color-mix(in oklab, var(--color-mist) 80%, white);
+}
+.package-docs code {
+  padding: 0.1em 0.35em;
+  border-radius: 0.25rem;
+  background: color-mix(in oklab, var(--color-mist) 70%, white);
+}
+.package-docs pre code {
+  padding: 0;
+  background: transparent;
+}
+.package-docs blockquote {
+  margin: 0.75em 0;
+  padding-left: 0.9rem;
+  border-left: 3px solid color-mix(in oklab, var(--color-bark) 25%, transparent);
+  color: color-mix(in oklab, var(--color-bark) 80%, transparent);
+}
+.package-docs table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.75em 0;
+  font-size: 0.9em;
+}
+.package-docs th,
+.package-docs td {
+  border: 1px solid color-mix(in oklab, var(--color-bark) 15%, transparent);
+  padding: 0.4rem 0.55rem;
+  text-align: left;
+}

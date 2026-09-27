@@ -9,6 +9,14 @@ type InstallPreviewResponse = {
 };
 
 type BusyAction = "preview" | "install" | null;
+type DocKind = "readme" | "changelog";
+type PackageDoc = {
+  kind: DocKind;
+  version: string;
+  markdown: string;
+  html: string;
+  missing?: boolean;
+};
 
 const INSTALL_STATUS_STEPS = [
   "Downloading package…",
@@ -23,6 +31,19 @@ function formatElapsed(seconds: number): string {
   return m > 0 ? `${m}m ${s.toString().padStart(2, "0")}s` : `${s}s`;
 }
 
+function formatBytes(n?: number | null): string | null {
+  if (n == null || n <= 0) return null;
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatDate(iso?: string | null): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? null : d.toLocaleDateString();
+}
+
 export default function PackageDetailPage() {
   const { source = "", fullName = "" } = useParams();
   const decoded = decodeURIComponent(fullName);
@@ -34,6 +55,10 @@ export default function PackageDetailPage() {
   const [statusLine, setStatusLine] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [installed, setInstalled] = useState<InstalledPackage[] | null>(null);
+  const [docTab, setDocTab] = useState<DocKind>("readme");
+  const [docs, setDocs] = useState<Partial<Record<DocKind, PackageDoc>>>({});
+  const [docsBusy, setDocsBusy] = useState(false);
+  const [docsError, setDocsError] = useState<string | null>(null);
   const stepTimer = useRef<number | null>(null);
   const elapsedTimer = useRef<number | null>(null);
 
@@ -53,6 +78,38 @@ export default function PackageDetailPage() {
       if (elapsedTimer.current) window.clearInterval(elapsedTimer.current);
     };
   }, []);
+
+  useEffect(() => {
+    if (!version) return;
+    let cancelled = false;
+    setDocs({});
+    setDocsError(null);
+    setDocsBusy(true);
+    (async () => {
+      try {
+        const [readme, changelog] = await Promise.all([
+          api.get<PackageDoc>(
+            `/api/packages/${source}/${encodeURIComponent(decoded)}/docs?kind=readme&version=${encodeURIComponent(version)}`,
+          ),
+          api.get<PackageDoc>(
+            `/api/packages/${source}/${encodeURIComponent(decoded)}/docs?kind=changelog&version=${encodeURIComponent(version)}`,
+          ),
+        ]);
+        if (!cancelled) {
+          setDocs({ readme, changelog });
+          if (readme.missing && !changelog.missing) setDocTab("changelog");
+          else setDocTab("readme");
+        }
+      } catch (e) {
+        if (!cancelled) setDocsError(e instanceof Error ? e.message : "Failed to load package docs");
+      } finally {
+        if (!cancelled) setDocsBusy(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [source, decoded, version]);
 
   function clearProgressTimers() {
     if (stepTimer.current) {
@@ -133,10 +190,11 @@ export default function PackageDetailPage() {
 
   const selected =
     (pkg.versions || []).find((v) => v.version_number === version) || (pkg.versions || [])[0];
-  const description = (selected?.description || pkg.description || "").trim();
+  const shortDescription = (selected?.description || pkg.description || "").trim();
   const iconUrl = selected?.icon || pkg.icon_url || null;
   const deps = selected?.dependencies?.length ? selected.dependencies : pkg.dependencies || [];
   const website = selected?.website_url || null;
+  const activeDoc = docs[docTab];
   const installing = busy === "install";
   const previewing = busy === "preview";
   const installLabel = installing
@@ -144,19 +202,6 @@ export default function PackageDetailPage() {
     : pkg.installed
       ? "Reinstall / Update"
       : "Install";
-
-  function formatBytes(n?: number | null): string | null {
-    if (n == null || n <= 0) return null;
-    if (n < 1024) return `${n} B`;
-    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-    return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-  }
-
-  function formatDate(iso?: string | null): string | null {
-    if (!iso) return null;
-    const d = new Date(iso);
-    return Number.isNaN(d.getTime()) ? null : d.toLocaleDateString();
-  }
 
   return (
     <div className="space-y-6">
@@ -187,7 +232,7 @@ export default function PackageDetailPage() {
             )}
           </div>
           <p className="text-sm text-bark/70">
-            {pkg.owner} · {pkg.full_name}
+            {pkg.owner} · {selected?.version_number || pkg.latest_version || pkg.full_name}
           </p>
           <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-sm text-bark/65">
             {pkg.package_url && (
@@ -207,18 +252,10 @@ export default function PackageDetailPage() {
             )}
           </div>
           <p className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-bark/60">
+            <span>★ {pkg.rating_score}</span>
             <span>{pkg.downloads.toLocaleString()} downloads</span>
-            {pkg.rating_score > 0 && <span>★ {pkg.rating_score}</span>}
-            {formatDate(pkg.date_updated) && <span>Updated {formatDate(pkg.date_updated)}</span>}
-            {selected?.downloads != null && (
-              <span>
-                v{selected.version_number}: {selected.downloads.toLocaleString()} downloads
-              </span>
-            )}
             {formatBytes(selected?.file_size) && <span>{formatBytes(selected?.file_size)}</span>}
-            {formatDate(selected?.date_created) && (
-              <span>Released {formatDate(selected?.date_created)}</span>
-            )}
+            {formatDate(pkg.date_updated) && <span>Updated {formatDate(pkg.date_updated)}</span>}
           </p>
           {(pkg.categories || []).length > 0 && (
             <div className="mt-2 flex flex-wrap gap-1.5">
@@ -232,16 +269,53 @@ export default function PackageDetailPage() {
               ))}
             </div>
           )}
+          {shortDescription && (
+            <p className="mt-3 max-w-3xl text-sm text-bark/75">{shortDescription}</p>
+          )}
         </div>
       </div>
 
       <div className="rounded-2xl border border-bark/10 bg-paper/80 p-5">
-        <h3 className="font-display text-2xl">About</h3>
-        {description ? (
-          <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-bark/85">{description}</p>
-        ) : (
-          <p className="mt-3 text-sm text-bark/55">No description provided for this version.</p>
-        )}
+        <div className="flex flex-wrap gap-2 border-b border-bark/10 pb-3">
+          {(
+            [
+              ["readme", "Details"],
+              ["changelog", "Changelog"],
+            ] as const
+          ).map(([kind, label]) => {
+            const missing = docs[kind]?.missing;
+            return (
+              <button
+                key={kind}
+                type="button"
+                onClick={() => setDocTab(kind)}
+                className={[
+                  "rounded-full px-3 py-1.5 text-sm transition",
+                  docTab === kind ? "bg-moss text-paper" : "bg-mist/70 text-bark hover:bg-mist",
+                  missing ? "opacity-60" : "",
+                ].join(" ")}
+              >
+                {label}
+                {missing ? " (none)" : ""}
+              </button>
+            );
+          })}
+        </div>
+        <div className="mt-4 min-h-[8rem]">
+          {docsBusy && <p className="text-sm text-bark/60">Loading package page…</p>}
+          {docsError && <p className="text-sm text-danger">{docsError}</p>}
+          {!docsBusy && !docsError && activeDoc?.missing && (
+            <p className="text-sm text-bark/55">
+              No {docTab} published for this version on {pkg.source}.
+            </p>
+          )}
+          {!docsBusy && !docsError && activeDoc && !activeDoc.missing && activeDoc.html && (
+            <div
+              className="package-docs text-sm text-bark/85"
+              dangerouslySetInnerHTML={{ __html: activeDoc.html }}
+            />
+          )}
+        </div>
       </div>
 
       <div className="rounded-2xl border border-bark/10 bg-paper/80 p-5">

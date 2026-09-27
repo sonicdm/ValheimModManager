@@ -210,6 +210,15 @@ def test_restart_server_stop_bootstrap_start(monkeypatch):
     ]
 
 
+def test_sanitize_package_doc_html_strips_scripts():
+    from app.services.packages import _sanitize_html
+
+    html = _sanitize_html('<h2>Hi</h2><script>alert(1)</script><a href="https://ok.example">link</a>')
+    assert "<h2>Hi</h2>" in html
+    assert "script" not in html.lower()
+    assert 'href="https://ok.example"' in html
+
+
 def test_category_include_exclude_filters():
     from app.services.packages import PackageInfo, _matches_category_filters
 

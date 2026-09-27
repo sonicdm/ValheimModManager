@@ -78,7 +78,7 @@ Also shows server status, counts, pending updates, maintenance schedule, and rec
 ### Discover and install
 
 1. Open **Discover**. Search by name/author; use **Include categories** / **Exclude categories** (Thunderstore-style), source, and sort. Defaults to server-side tags (`Server-side`, Hexium `Server-only` / `Client & Server`) so client-only chrome stays out of the way.
-2. Open a package. Pick a version, optionally **Preview** (dependency plan + warnings), then **Install**.
+2. Open a package. The page loads the store **README** / **Changelog** (full markdown, not just the short blurb), categories, and stats. Pick a version, optionally **Preview**, then **Install**.
 3. Install downloads the zip, extracts into staging, copies into `config/bepinex/plugins` (and patchers when present), and records the package in the manager DB.
 4. When the install finishes, use **Restart + sync** on the dashboard so the game process actually loads the new files.
 

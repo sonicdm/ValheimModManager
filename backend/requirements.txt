@@ -11,5 +11,6 @@ dnfile==0.15.1
 python-multipart==0.0.20
 itsdangerous==2.2.0
 orjson==3.10.12
+bleach==6.2.0
 pytest==8.3.4
 pytest-asyncio==0.25.0

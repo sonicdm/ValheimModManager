@@ -466,6 +466,35 @@ def search_packages(
     return outs
 
 
+@router.get("/packages/{source}/{full_name}/docs")
+async def package_docs(
+    source: str,
+    full_name: str,
+    user: Annotated[AdminUser, Depends(_auth_user)],
+    version: str | None = None,
+    kind: str = "readme",
+) -> dict[str, Any]:
+    pkg = package_service.get_package(source, full_name)
+    if pkg is None:
+        raise HTTPException(404, "Package not found — try refreshing the package index")
+    ver = version or (pkg.latest.version_number if pkg.latest else None)
+    if not ver:
+        raise HTTPException(400, "No version available")
+    try:
+        return await package_service.fetch_package_doc(
+            source,
+            full_name,
+            version=ver,
+            kind=kind,
+            owner=pkg.owner,
+            name=pkg.name,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(502, f"Failed to fetch package {kind}: {exc}") from exc
+
+
 @router.get("/packages/{source}/{full_name}", response_model=PackageOut)
 def package_detail(
     source: str,

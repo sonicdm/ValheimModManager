@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import bleach
 import httpx
 from sqlalchemy.orm import Session
 
@@ -406,3 +407,147 @@ def resolve_dependencies(
 
     add(source, pkg, target)
     return plan
+
+
+EXPERIMENTAL_API_BASE = {
+    "thunderstore": "https://thunderstore.io/api/experimental",
+    "hexium": "https://valheim.hexium.gg/api/experimental",
+}
+RENDER_MARKDOWN_URL = "https://thunderstore.io/api/experimental/frontend/render-markdown/"
+
+_DOC_ALLOWED_TAGS = list(
+    {
+        *bleach.sanitizer.ALLOWED_TAGS,
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "img",
+        "pre",
+        "code",
+        "table",
+        "thead",
+        "tbody",
+        "tr",
+        "th",
+        "td",
+        "hr",
+        "br",
+        "p",
+        "div",
+        "span",
+        "ul",
+        "ol",
+        "li",
+        "blockquote",
+        "strong",
+        "em",
+        "a",
+        "del",
+        "sup",
+        "sub",
+    }
+)
+_DOC_ALLOWED_ATTRS = {
+    **bleach.sanitizer.ALLOWED_ATTRIBUTES,
+    "img": ["src", "alt", "title", "width", "height"],
+    "a": ["href", "title", "rel", "target"],
+    "td": ["colspan", "rowspan"],
+    "th": ["colspan", "rowspan"],
+    "code": ["class"],
+    "pre": ["class"],
+    "div": ["class"],
+    "span": ["class"],
+}
+
+
+def _docs_cache_path(source: str, full_name: str, version: str, kind: str) -> Path:
+    safe_name = full_name.replace("/", "_").replace("\\", "_")
+    return get_settings().data_dir / "docs_cache" / source / safe_name / version / f"{kind}.json"
+
+
+def _sanitize_html(html: str) -> str:
+    return bleach.clean(
+        html,
+        tags=_DOC_ALLOWED_TAGS,
+        attributes=_DOC_ALLOWED_ATTRS,
+        protocols=["http", "https", "mailto"],
+        strip=True,
+    )
+
+
+async def _render_markdown(markdown: str) -> str:
+    if not markdown.strip():
+        return ""
+    async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+        response = await client.post(RENDER_MARKDOWN_URL, json={"markdown": markdown})
+        response.raise_for_status()
+        data = response.json()
+    html = data.get("html") if isinstance(data, dict) else None
+    if not isinstance(html, str):
+        raise ValueError("Unexpected markdown render response")
+    return _sanitize_html(html)
+
+
+async def fetch_package_doc(
+    source: str,
+    full_name: str,
+    *,
+    version: str,
+    kind: str = "readme",
+    owner: str | None = None,
+    name: str | None = None,
+) -> dict[str, Any]:
+    """Fetch README or changelog markdown and rendered HTML for a package version."""
+    kind = kind if kind in ("readme", "changelog") else "readme"
+    if source not in EXPERIMENTAL_API_BASE:
+        raise ValueError(f"Unsupported source for docs: {source}")
+    if not version:
+        raise ValueError("version is required")
+
+    cache = _docs_cache_path(source, full_name, version, kind)
+    if cache.is_file():
+        try:
+            cached = json.loads(cache.read_text(encoding="utf-8"))
+            if isinstance(cached, dict) and "html" in cached and "markdown" in cached:
+                return cached
+        except (OSError, json.JSONDecodeError, TypeError):
+            pass
+
+    info = get_package(source, full_name)
+    ns = owner or (info.owner if info else None)
+    pkg_name = name or (info.name if info else None)
+    if not ns or not pkg_name:
+        # Fallback: Owner-Name (first hyphen)
+        if "-" in full_name:
+            ns, pkg_name = full_name.split("-", 1)
+        else:
+            raise ValueError("Cannot resolve package owner/name for docs")
+
+    base = EXPERIMENTAL_API_BASE[source]
+    url = f"{base}/package/{ns}/{pkg_name}/{version}/{kind}/"
+    async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+        response = await client.get(url)
+        if response.status_code == 404:
+            result = {"kind": kind, "version": version, "markdown": "", "html": "", "missing": True}
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            cache.write_text(json.dumps(result), encoding="utf-8")
+            return result
+        response.raise_for_status()
+        data = response.json()
+    markdown = data.get("markdown") if isinstance(data, dict) else ""
+    if not isinstance(markdown, str):
+        markdown = ""
+    html = await _render_markdown(markdown) if markdown.strip() else ""
+    result = {
+        "kind": kind,
+        "version": version,
+        "markdown": markdown,
+        "html": html,
+        "missing": not bool(markdown.strip()),
+    }
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    cache.write_text(json.dumps(result), encoding="utf-8")
+    return result
