@@ -1,8 +1,15 @@
 # Valheim Mod Manager
 
-Self-hosted companion for an existing [community-valheim-tools/valheim-server](https://github.com/community-valheim-tools/valheim-server-docker) deployment (`ghcr.io/community-valheim-tools/valheim-server`). Discover, install, configure, update, and roll back BepInEx mods from **Thunderstore** and **Hexium** without replacing the game container or touching world saves.
+Self-hosted companion for an existing [community-valheim-tools/valheim-server](https://github.com/community-valheim-tools/valheim-server-docker) deployment. Discover, install, configure, update, and roll back BepInEx mods from **Thunderstore** and **Hexium** without replacing the game container or touching world saves.
 
-That image is the relocated home of the former [lloesche/valheim-server-docker](https://github.com/lloesche/valheim-server-docker) project (same layout and Supervisor ABI). Legacy `ghcr.io/lloesche/valheim-server` tags remain compatible until they disappear.
+**Images (preferred — no local build):**
+
+| Role | Image |
+|---|---|
+| Valheim server | `ghcr.io/community-valheim-tools/valheim-server` |
+| Mod manager | `ghcr.io/sonicdm/valheim-mod-manager:latest` (or pin `:0.1.0`) |
+
+The Valheim image is the relocated home of the former [lloesche/valheim-server-docker](https://github.com/lloesche/valheim-server-docker) project (same layout and Supervisor ABI). Legacy `ghcr.io/lloesche/valheim-server` tags remain compatible until they disappear.
 
 ## Screenshots
 
@@ -28,59 +35,62 @@ With `BEPINEX=true`, the server image keeps a persistent tree under `/config/bep
 2. Applies changes by stopping `valheim-server`, running `valheim-bootstrap`, then starting `valheim-server` again — it does **not** bind-mount or write `data/bepinex`
 3. Leaves the Valheim image and world saves alone
 
-Do **not** copy this working folder as-is (`.venv`, `node_modules`, and `data/` are machine-local).
+Do **not** copy a full git working tree as-is (`.venv`, `node_modules`, and `data/` are machine-local). For production you only need Compose files + `.env` and pulled images.
 
-## Quick start (standalone Compose)
+## Quick start (pull images)
 
-1. Clone and configure paths for **your** host (CVT / former lloesche layout shown):
+Use published GHCR images. You do **not** need `--build`.
+
+### Combined (Valheim + manager)
+
+Best path for a new host. Grab the example compose and env template, create `config/` / `data/`, then pull and start:
 
 ```bash
-git clone https://github.com/sonicdm/ValheimModManager.git
-cd ValheimModManager
+mkdir -p valheim-stack/config valheim-stack/data && cd valheim-stack
+curl -fsSL -o docker-compose.yml \
+  https://raw.githubusercontent.com/sonicdm/ValheimModManager/main/docker-compose.combined.example.yml
+curl -fsSL -o .env.example \
+  https://raw.githubusercontent.com/sonicdm/ValheimModManager/main/.env.example
 cp .env.example .env
+# set MOD_MANAGER_SECRET_KEY, MOD_MANAGER_ADMIN_PASSWORD, SERVER_PASS, …
+docker compose pull
+docker compose up -d
 ```
 
-Edit `.env` (required values first):
+Open http://localhost:8090 and sign in as `admin` with `MOD_MANAGER_ADMIN_PASSWORD`. After the first boot with `BEPINEX=true`, BepInEx creates `config/bepinex` (the manager mounts that path).
 
 | Variable | Typical value |
 |---|---|
 | `MOD_MANAGER_SECRET_KEY` | Long random string (session/CSRF signing) |
 | `MOD_MANAGER_ADMIN_PASSWORD` | UI login password for user `admin` |
-| `VALHEIM_BEPINEX_PATH` | `$HOME/valheim-server/config/bepinex` |
-| `VALHEIM_DOCKER_NETWORK` | Network of the Valheim container (`docker network ls`) |
-| `SUPERVISOR_URL` | `http://<valheim-container-name>:9001` |
+| `SERVER_PASS` | Valheim join password |
+| `SUPERVISOR_HTTP_PASS` | Optional; same value as manager `SUPERVISOR_PASSWORD` if set |
 | `MOD_MANAGER_PORT` | Host port for the UI (default `8090`) |
 | `TIMEZONE` | IANA zone for maintenance cron (default `America/Los_Angeles`) |
 
-Do **not** mount `data/bepinex` or its `plugins`/`patchers` subfolders into the manager. Those binds pin the directory the Valheim image renames during BepInEx merge.
+Do **not** bind-mount `data/bepinex` or its `plugins`/`patchers` into the manager. Those binds pin the directory the Valheim image renames during BepInEx merge.
 
-2. On the Valheim container, enable Supervisor HTTP if you want restart control: `SUPERVISOR_HTTP=true` (and optionally `SUPERVISOR_HTTP_PASS`). Use that same password as `SUPERVISOR_PASSWORD` here — not a misnamed `SUPERVISOR_PASS`.
+### Standalone manager (existing Valheim container)
 
-3. Pull and run (image: `ghcr.io/sonicdm/valheim-mod-manager:latest`):
+If Valheim already runs elsewhere, clone or copy this repo’s `docker-compose.yml` + `.env.example`, point `VALHEIM_BEPINEX_PATH` / `VALHEIM_DOCKER_NETWORK` / `SUPERVISOR_URL` at that server, enable `SUPERVISOR_HTTP=true` on Valheim, then:
 
 ```bash
 docker compose pull
 docker compose up -d
 ```
 
-4. Open http://localhost:8090 and sign in as `admin` with `MOD_MANAGER_ADMIN_PASSWORD`.
-
-On launch the manager runs a **one-shot plugin scan** (and refreshes package indexes) in the background, so existing mods under `config/bepinex` show up without clicking Scan first. Use **Scan plugins** anytime after you change files outside the UI.
-
-Persistent manager state lives in the `mod_manager_data` volume, not in the repo.
+See `docker-compose.merge.example.yml` for a sibling-service sketch.
 
 ### Updating
 
-Merges to `main` (and git tags `v*`) publish a new image via GitHub Actions. On the server:
+Merges to `main` and tags `v*` publish new images. On the host:
 
 ```bash
 docker compose pull
 docker compose up -d
 ```
 
-Pin a release with `image: ghcr.io/sonicdm/valheim-mod-manager:0.1.0` if you prefer not to float on `:latest`.
-
-After the first successful publish, open the GHCR package on GitHub and set visibility to **Public** so unauthenticated pulls work.
+Pin with `image: ghcr.io/sonicdm/valheim-mod-manager:0.1.0` instead of `:latest` if you want a fixed release.
 
 ## Usage
 
@@ -145,16 +155,9 @@ Lists BepInEx and mod `.cfg` files under the config tree. Open one to edit (stru
 3. Dashboard → **Restart + sync**.
 4. Edit `.cfg` under **Config** if needed, then restart again.
 
-## Combined Compose (server + manager)
+## Combined Compose reference
 
-One file runs [community-valheim-tools](https://github.com/community-valheim-tools/valheim-server-docker) and this manager on the same Docker network. Copy `docker-compose.combined.example.yml`, put `config/` and `data/` next to it (or edit the volume paths), fill `.env`, then:
-
-```bash
-cp .env.example .env
-# set MOD_MANAGER_SECRET_KEY, MOD_MANAGER_ADMIN_PASSWORD, SERVER_PASS, …
-docker compose -f docker-compose.combined.example.yml --env-file .env pull
-docker compose -f docker-compose.combined.example.yml --env-file .env up -d
-```
+Full YAML for the combined stack (same as `docker-compose.combined.example.yml`). Both services use published images — Valheim from CVT, manager from `ghcr.io/sonicdm/valheim-mod-manager`.
 
 ```yaml
 services:
@@ -213,11 +216,13 @@ volumes:
 
 Open http://localhost:8090 after BepInEx has created `config/bepinex` (first boot with `BEPINEX=true`). Do **not** bind-mount `data/bepinex`.
 
-If Valheim already runs in another compose project, use the standalone `docker-compose.yml` plus an external network instead — see `docker-compose.merge.example.yml`.
+On launch the manager runs a **one-shot plugin scan** (and refreshes package indexes) in the background. Persistent manager state lives in the `mod_manager_data` volume.
+
+If Valheim already runs in another compose project, use the standalone `docker-compose.yml` plus an external network — see [Quick start](#standalone-manager-existing-valheim-container).
 
 ## Development
 
-To hack on the manager without waiting for GHCR, uncomment `build: .` next to the `image:` line in compose and run `docker compose up -d --build`, or run the API/UI locally:
+Prefer pulled images for running a server. To hack on the manager, uncomment `build: .` next to the `image:` line in compose and run `docker compose up -d --build`, or run the API/UI locally:
 
 ```bash
 # Backend
