@@ -35,6 +35,8 @@ With `BEPINEX=true`, the server image keeps a persistent tree under `/config/bep
 2. Applies changes by stopping `valheim-server`, running `valheim-bootstrap`, then starting `valheim-server` again — it does **not** bind-mount or write `data/bepinex`
 3. Leaves the Valheim image and world saves alone
 
+**Persistent packages** (Make persistent) need a Valheim-side hook — see [Persistent packages](#persistent-packages). The manager only talks to Supervisor; it cannot recreate live plugin symlinks itself.
+
 Do **not** copy a full git working tree as-is (`.venv`, `node_modules`, and `data/` are machine-local). For production you only need Compose files + `.env` and pulled images.
 
 ## Quick start (pull images)
@@ -123,13 +125,33 @@ Manage everything already on disk:
 | **Pin / Unpin** | Blocks automatic updates for that package |
 | **Configure** | Jumps to that mod’s `.cfg` in **Config** (when one is known) |
 | **Link store / Change store** | Attach a local/unmanaged DLL to a Thunderstore or Hexium package for updates |
-| **Make persistent** | For bulky mods (lots of small files). Moves files to `config/bepinex/.persistent/<package>` and leaves a symlink in `plugins/` pointing at `/config/bepinex/.persistent/<package>`. Bootstrap then copies one symlink instead of walking thousands of files. Runtime data written by the mod follows the link and survives live-tree replaces. |
+| **Make persistent** | For bulky mods (lots of small files). Moves files to `config/bepinex/.persistent/<package>` and leaves a symlink in `plugins/` pointing at `/config/bepinex/.persistent/<package>`. Requires `POST_BEPINEX_CONFIG_HOOK` on the Valheim service — see [Persistent packages](#persistent-packages). |
 | **Make normal** | Undoes persistent layout (files back under `plugins/`) |
 | **Uninstall** | Removes managed files and the DB row |
 | **Import zip / DLL** | Drop a local package when it isn’t on a store |
 | **Rescan** / **Refresh indexes + scan** | Re-read disk and/or refresh package indexes |
 
 A **persistent** badge appears on rows that use the symlink layout.
+
+### Persistent packages
+
+Use **Make persistent** for mods with huge on-disk trees (WebMap tiles, asset packs, etc.). Layout:
+
+| Path | Role |
+|---|---|
+| `config/bepinex/.persistent/<package>/` | Real files (DLL + runtime data) |
+| `config/bepinex/plugins/<package>` | Symlink → `/config/bepinex/.persistent/<package>` |
+
+Bootstrap still syncs `plugins/` into `/opt/valheim/bepinex/BepInEx/plugins/`. On many hosts (especially **Windows/SMB** volumes) that config-side symlink is not a valid Linux link inside the Valheim container, so sync treats the package as missing and removes it from the live tree. Restart + sync cannot fix that: the manager only has Supervisor (`stop` / `valheim-bootstrap` / `start`), not a shell in the game container.
+
+**Required on the Valheim service** — recreate a Linux symlink for every `.persistent` package after each BepInEx config/sync:
+
+```yaml
+# Compose: $$ becomes $ inside the container
+- POST_BEPINEX_CONFIG_HOOK=for d in /config/bepinex/.persistent/*/; do [ -d "$$d" ] || continue; name=$$(basename "$$d"); ln -sfn "/config/bepinex/.persistent/$$name" "/opt/valheim/bepinex/BepInEx/plugins/$$name"; done
+```
+
+This is included in `docker-compose.combined.example.yml`. If Valheim already runs in another compose file, add the same env var there (see `docker-compose.merge.example.yml`). Do **not** bind-mount onto `data/bepinex/.../plugins/...` — BepInEx merge renames that tree.
 
 ### Config
 
@@ -151,7 +173,7 @@ Lists BepInEx and mod `.cfg` files under the config tree. Open one to edit (stru
 ### Typical flow (new mod)
 
 1. **Discover** → install the package.
-2. If it is huge (web map tiles, asset packs, etc.), **Installed** → **Make persistent**.
+2. If it is huge (web map tiles, asset packs, etc.), **Installed** → **Make persistent** (ensure `POST_BEPINEX_CONFIG_HOOK` is set — [Persistent packages](#persistent-packages)).
 3. Dashboard → **Restart + sync**.
 4. Edit `.cfg` under **Config** if needed, then restart again.
 
@@ -183,6 +205,8 @@ services:
       - SUPERVISOR_HTTP_PORT=9001
       - SUPERVISOR_HTTP_USER=admin
       - SUPERVISOR_HTTP_PASS=${SUPERVISOR_HTTP_PASS:-}
+      # Relink .persistent packages after bootstrap (see Persistent packages)
+      - POST_BEPINEX_CONFIG_HOOK=for d in /config/bepinex/.persistent/*/; do [ -d "$$d" ] || continue; name=$$(basename "$$d"); ln -sfn "/config/bepinex/.persistent/$$name" "/opt/valheim/bepinex/BepInEx/plugins/$$name"; done
     restart: unless-stopped
     stop_grace_period: 2m
 

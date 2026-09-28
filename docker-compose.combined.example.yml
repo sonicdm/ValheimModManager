@@ -31,6 +31,11 @@ services:
       - SUPERVISOR_HTTP_PORT=9001
       - SUPERVISOR_HTTP_USER=admin
       - SUPERVISOR_HTTP_PASS=${SUPERVISOR_HTTP_PASS:-}
+      # Relink every .persistent package into the live plugins tree after bootstrap sync.
+      # Required when config-side symlinks are not valid Linux links (common on Windows/SMB hosts).
+      # Compose turns $$ into $ inside the container. The manager cannot do this on Restart+sync
+      # (Supervisor only — no shell in the Valheim container).
+      - POST_BEPINEX_CONFIG_HOOK=for d in /config/bepinex/.persistent/*/; do [ -d "$$d" ] || continue; name=$$(basename "$$d"); ln -sfn "/config/bepinex/.persistent/$$name" "/opt/valheim/bepinex/BepInEx/plugins/$$name"; done
     restart: unless-stopped
     stop_grace_period: 2m
 

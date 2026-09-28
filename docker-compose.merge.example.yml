@@ -10,6 +10,8 @@
 #       - BEPINEX=true
 #       - SUPERVISOR_HTTP=true
 #       # - SUPERVISOR_HTTP_PASS=...
+#       # If you use Make persistent / .persistent packages (e.g. WebMap), also set:
+#       # - POST_BEPINEX_CONFIG_HOOK=for d in /config/bepinex/.persistent/*/; do [ -d "$$d" ] || continue; name=$$(basename "$$d"); ln -sfn "/config/bepinex/.persistent/$$name" "/opt/valheim/bepinex/BepInEx/plugins/$$name"; done
 #
 #   mod-manager:
 #     image: ghcr.io/sonicdm/valheim-mod-manager:latest
