@@ -1,5 +1,6 @@
 import { NavLink, Outlet } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
+import { BackgroundJobToaster } from "./BackgroundJobToaster";
 
 const links = [
   { to: "/", label: "Dashboard", end: true },
@@ -16,6 +17,7 @@ export default function Layout() {
 
   return (
     <div className="mx-auto flex min-h-screen max-w-6xl flex-col gap-6 px-4 py-6 md:px-8">
+      <BackgroundJobToaster />
       <header className="flex flex-wrap items-end justify-between gap-4 border-b border-bark/15 pb-4">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-moss-deep/80">

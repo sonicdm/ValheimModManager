@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import CategoryMultiSelect, { CategoryInfo } from "../components/CategoryMultiSelect";
+import { StatusToast, useStatusToast } from "../components/StatusToast";
 import { api, Package } from "../api/client";
 
 type CategoriesResponse = {
@@ -27,6 +28,8 @@ export default function DiscoverPage() {
   const [packages, setPackages] = useState<Package[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [indexBusy, setIndexBusy] = useState(false);
+  const toast = useStatusToast();
 
   const loadCategories = useCallback(async (src: string) => {
     const params = new URLSearchParams();
@@ -90,20 +93,30 @@ export default function DiscoverPage() {
   }
 
   async function refreshIndex() {
-    setBusy(true);
+    setIndexBusy(true);
+    setError(null);
+    toast.showBusy("Updating Thunderstore / Hexium indexes…");
     try {
-      await api.post("/api/packages/refresh");
+      const result = await api.post<{ counts?: Record<string, number> }>("/api/packages/refresh");
       await loadCategories(source);
       await search();
+      const counts = result.counts || {};
+      const summary = Object.entries(counts)
+        .map(([src, n]) => `${src}: ${n}`)
+        .join(", ");
+      toast.showOk(summary ? `Indexes updated (${summary}).` : "Indexes updated.");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Refresh failed");
+      const msg = e instanceof Error ? e.message : "Refresh failed";
+      setError(msg);
+      toast.showError(msg);
     } finally {
-      setBusy(false);
+      setIndexBusy(false);
     }
   }
 
   return (
     <div className="space-y-4">
+      <StatusToast message={toast.message} tone={toast.tone} busy={toast.busy} />
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h2 className="font-display text-3xl">Discover</h2>
@@ -112,8 +125,13 @@ export default function DiscoverPage() {
             servers.
           </p>
         </div>
-        <button type="button" disabled={busy} onClick={refreshIndex} className="btn-secondary">
-          Refresh indexes
+        <button
+          type="button"
+          disabled={busy || indexBusy}
+          onClick={refreshIndex}
+          className="btn-secondary"
+        >
+          {indexBusy ? "Updating indexes…" : "Refresh indexes"}
         </button>
       </div>
 
@@ -126,7 +144,7 @@ export default function DiscoverPage() {
       >
         <input
           className="min-w-[16rem] flex-1 rounded-md border border-bark/20 bg-paper px-3 py-2"
-          placeholder="Search by name or author"
+          placeholder='Search mods — "exact phrase" or fuzzy words'
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />

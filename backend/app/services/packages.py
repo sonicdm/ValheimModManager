@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from ..config import get_settings
 from ..models import PackageCacheMeta
-from .settings_service import get_setting
+from .settings_service import get_setting, log_activity
 
 logger = logging.getLogger(__name__)
 
@@ -159,6 +160,14 @@ async def refresh_source(source: str, db: Session | None = None) -> int:
         meta.last_refreshed_at = datetime.now(timezone.utc)
         meta.package_count = len(parsed)
         db.commit()
+        log_activity(
+            db,
+            "package_refresh",
+            source=source,
+            result="ok",
+            message=f"Indexed {len(parsed)} packages from {source}",
+            details={"package_count": len(parsed)},
+        )
     logger.info("Refreshed %s packages from %s", len(parsed), source)
     return len(parsed)
 
@@ -194,6 +203,85 @@ def _matches_category_filters(
     return True
 
 
+def _normalize_search_text(text: str) -> str:
+    """Lowercase and treat _, -, spaces as equivalent word separators."""
+    t = (text or "").lower().replace("_", " ").replace("-", " ")
+    return " ".join(t.split())
+
+
+# "double" or 'single' quoted spans are exact (case-insensitive) substring matches.
+_QUERY_QUOTE_RE = re.compile(r'"([^"]*)"|\'([^\']*)\'')
+
+
+@dataclass(frozen=True)
+class _ParsedQuery:
+    exact: tuple[str, ...]  # lowercase phrases; _, -, spaces kept as typed
+    fuzzy: tuple[str, ...]  # normalized tokens from the unquoted remainder
+
+
+def _parse_query(query: str) -> _ParsedQuery:
+    """Split a search string into exact quoted phrases + fuzzy unquoted tokens."""
+    text = query or ""
+    exact: list[str] = []
+    remainder: list[str] = []
+    last = 0
+    for match in _QUERY_QUOTE_RE.finditer(text):
+        remainder.append(text[last : match.start()])
+        phrase = (match.group(1) if match.group(1) is not None else match.group(2) or "").strip()
+        if phrase:
+            exact.append(phrase.lower())
+        last = match.end()
+    remainder.append(text[last:])
+    fuzzy = tuple(_normalize_search_text(" ".join(remainder)).split())
+    return _ParsedQuery(exact=tuple(exact), fuzzy=fuzzy)
+
+
+def _pkg_search_blob(pkg: PackageInfo) -> str:
+    return " ".join([pkg.name, pkg.full_name, pkg.owner, pkg.description or ""])
+
+
+def _matches_query(pkg: PackageInfo, parsed: _ParsedQuery) -> bool:
+    """Quoted phrases = exact substring; remaining tokens = fuzzy (_,-/space)."""
+    if not parsed.exact and not parsed.fuzzy:
+        return True
+    raw = _pkg_search_blob(pkg).lower()
+    for phrase in parsed.exact:
+        if phrase not in raw:
+            return False
+    if parsed.fuzzy:
+        haystack = _normalize_search_text(raw)
+        if not all(tok in haystack for tok in parsed.fuzzy):
+            return False
+    return True
+
+
+def _query_relevance(pkg: PackageInfo, parsed: _ParsedQuery) -> int:
+    """Lower is better. Prefer name hits over description-only matches."""
+    if not parsed.exact and not parsed.fuzzy:
+        return 0
+    name_raw = (pkg.name or "").lower()
+    full_raw = (pkg.full_name or "").lower()
+    name_n = _normalize_search_text(pkg.name)
+    full_n = _normalize_search_text(pkg.full_name)
+
+    if parsed.exact and all(p in name_raw for p in parsed.exact):
+        return 0
+    if parsed.exact and all(p in full_raw for p in parsed.exact):
+        return 1
+
+    if parsed.fuzzy:
+        phrase = " ".join(parsed.fuzzy)
+        if phrase and phrase in name_n:
+            return 2
+        if all(tok in name_n for tok in parsed.fuzzy):
+            return 3
+        if phrase and phrase in full_n:
+            return 4
+        if all(tok in full_n for tok in parsed.fuzzy):
+            return 5
+    return 6
+
+
 def list_categories(db: Session, *, source: str | None = None) -> list[dict[str, Any]]:
     """Return categories present in the cached indexes, with package counts."""
     sources = [source] if source else enabled_sources(db)
@@ -224,7 +312,7 @@ def search_packages(
 ) -> list[PackageInfo]:
     sources = [source] if source else enabled_sources(db)
     packages: list[PackageInfo] = []
-    q = query.strip().lower()
+    parsed = _parse_query(query)
     include_list = list(include or [])
     exclude_list = list(exclude or [])
     # Back-compat: single category acts as include
@@ -236,12 +324,7 @@ def search_packages(
                 continue
             if not _matches_category_filters(pkg, include=include_list, exclude=exclude_list):
                 continue
-            if (
-                q
-                and q not in pkg.full_name.lower()
-                and q not in (pkg.description or "").lower()
-                and q not in pkg.owner.lower()
-            ):
+            if not _matches_query(pkg, parsed):
                 continue
             packages.append(pkg)
 
@@ -252,7 +335,10 @@ def search_packages(
     elif sort == "rating":
         packages.sort(key=lambda p: p.rating_score, reverse=True)
     else:
-        packages.sort(key=lambda p: p.downloads, reverse=True)
+        # downloads (default): with a query, boost name/full_name relevance first
+        packages.sort(
+            key=lambda p: (_query_relevance(p, parsed), -p.downloads),
+        )
 
     return packages[offset : offset + limit]
 

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, Backup } from "../api/client";
+import { StatusToast, useStatusToast } from "../components/StatusToast";
 import { formatLocalDateTime } from "../lib/time";
 
 export default function BackupsPage() {
@@ -7,6 +8,7 @@ export default function BackupsPage() {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const toast = useStatusToast();
 
   async function load() {
     setBackups(await api.get<Backup[]>("/api/backups"));
@@ -19,12 +21,16 @@ export default function BackupsPage() {
   async function createBackup() {
     setBusy(true);
     setError(null);
+    toast.showBusy("Creating mod-state backup…");
     try {
       await api.post("/api/backups", { label: `manual-${new Date().toISOString()}` });
       setMessage("Backup created.");
+      toast.showOk("Backup created.");
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Backup failed");
+      const msg = e instanceof Error ? e.message : "Backup failed";
+      setError(msg);
+      toast.showError(msg);
     } finally {
       setBusy(false);
     }
@@ -36,12 +42,16 @@ export default function BackupsPage() {
     }
     setBusy(true);
     setError(null);
+    toast.showBusy(`Restoring backup "${label}"…`);
     try {
       await api.post(`/api/backups/${id}/restore`);
       setMessage("Backup restored. Restart may be required.");
+      toast.showOk("Backup restored. Restart may be required.");
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Restore failed");
+      const msg = e instanceof Error ? e.message : "Restore failed";
+      setError(msg);
+      toast.showError(msg);
     } finally {
       setBusy(false);
     }
@@ -49,6 +59,7 @@ export default function BackupsPage() {
 
   return (
     <div className="space-y-4">
+      <StatusToast message={toast.message} tone={toast.tone} busy={toast.busy} />
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h2 className="font-display text-3xl">Backups</h2>
@@ -62,7 +73,7 @@ export default function BackupsPage() {
           onClick={createBackup}
           className="rounded-md bg-moss px-3 py-2 text-sm text-paper"
         >
-          Create backup
+          {busy ? "Working…" : "Create backup"}
         </button>
       </div>
       {error && <p className="text-sm text-danger">{error}</p>}
@@ -102,13 +113,6 @@ export default function BackupsPage() {
                 </td>
               </tr>
             ))}
-            {backups.length === 0 && (
-              <tr>
-                <td className="px-4 py-6 text-bark/60" colSpan={5}>
-                  No backups yet.
-                </td>
-              </tr>
-            )}
           </tbody>
         </table>
       </div>

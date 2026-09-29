@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, InstalledPackage, Package } from "../api/client";
+import { StatusToast, useStatusToast } from "../components/StatusToast";
 
 type LinkForm = {
   id: number;
@@ -19,6 +20,7 @@ export default function InstalledPage() {
   const [importOpen, setImportOpen] = useState(false);
   const [importName, setImportName] = useState("");
   const [importFile, setImportFile] = useState<File | null>(null);
+  const toast = useStatusToast();
 
   const load = useCallback(async () => {
     setPackages(await api.get<InstalledPackage[]>("/api/plugins"));
@@ -26,6 +28,14 @@ export default function InstalledPage() {
 
   useEffect(() => {
     load().catch((e) => setError(e.message));
+  }, [load]);
+
+  useEffect(() => {
+    function onScanDone() {
+      load().catch(() => undefined);
+    }
+    window.addEventListener("vmm:scan-done", onScanDone);
+    return () => window.removeEventListener("vmm:scan-done", onScanDone);
   }, [load]);
 
   useEffect(() => {
@@ -49,15 +59,23 @@ export default function InstalledPage() {
     return () => clearTimeout(handle);
   }, [linkForm?.query, linkForm?.source, linkForm]);
 
-  async function act(id: number, fn: () => Promise<unknown>) {
+  async function act(
+    id: number,
+    fn: () => Promise<unknown>,
+    labels?: { busy: string; ok: string },
+  ) {
     setBusy(id);
     setError(null);
     setInfo(null);
+    toast.showBusy(labels?.busy ?? "Working…");
     try {
       await fn();
       await load();
+      toast.showOk(labels?.ok ?? "Done.");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Action failed");
+      const msg = e instanceof Error ? e.message : "Action failed";
+      setError(msg);
+      toast.showError(msg);
     } finally {
       setBusy(null);
     }
@@ -67,6 +85,7 @@ export default function InstalledPage() {
     setBusy(-1);
     setError(null);
     setInfo(null);
+    toast.showBusy("Scanning plugins on disk…");
     try {
       const result = await api.post<{
         scanned: number;
@@ -74,13 +93,43 @@ export default function InstalledPage() {
       }>("/api/scan");
       await load();
       const pruned = result.pruned ?? [];
-      setInfo(
-        pruned.length
-          ? `Scan found ${result.scanned} on disk; removed ${pruned.length} missing: ${pruned.join(", ")}`
-          : `Scan found ${result.scanned} plugins on disk.`,
-      );
+      const msg = pruned.length
+        ? `Scan found ${result.scanned} on disk; removed ${pruned.length} missing: ${pruned.join(", ")}`
+        : `Scan found ${result.scanned} plugins on disk.`;
+      setInfo(msg);
+      toast.showOk(msg);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Scan failed");
+      const msg = e instanceof Error ? e.message : "Scan failed";
+      setError(msg);
+      toast.showError(msg);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function refreshIndexesAndScan() {
+    setBusy(-1);
+    setError(null);
+    setInfo(null);
+    toast.showBusy("Updating store indexes…");
+    try {
+      await api.post("/api/packages/refresh");
+      toast.showBusy("Indexes updated — scanning plugins…");
+      const result = await api.post<{
+        scanned: number;
+        pruned?: string[];
+      }>("/api/scan");
+      await load();
+      const pruned = result.pruned ?? [];
+      const msg = pruned.length
+        ? `Indexes refreshed. Scan found ${result.scanned}; pruned ${pruned.length}.`
+        : `Indexes refreshed. Scan found ${result.scanned} plugins.`;
+      setInfo(msg);
+      toast.showOk(msg);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Refresh failed";
+      setError(msg);
+      toast.showError(msg);
     } finally {
       setBusy(null);
     }
@@ -99,6 +148,7 @@ export default function InstalledPage() {
 
   return (
     <div className="space-y-4">
+      <StatusToast message={toast.message} tone={toast.tone} busy={toast.busy} />
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h2 className="font-display text-3xl">Installed mods</h2>
@@ -117,22 +167,21 @@ export default function InstalledPage() {
           </button>
           <button
             type="button"
-            onClick={() =>
-              act(-1, async () => {
-                await api.post("/api/packages/refresh");
-                await rescan();
-              })
-            }
+            disabled={busy !== null}
+            onClick={() => refreshIndexesAndScan()}
             className="btn-secondary"
           >
-            Refresh indexes + scan
+            {busy === -1 && toast.message?.includes("indexes")
+              ? "Refreshing…"
+              : "Refresh indexes + scan"}
           </button>
           <button
             type="button"
+            disabled={busy !== null}
             onClick={() => rescan()}
             className="btn-primary"
           >
-            Rescan
+            {busy === -1 && toast.message?.includes("Scanning") ? "Scanning…" : "Rescan"}
           </button>
         </div>
       </div>
@@ -190,8 +239,14 @@ export default function InstalledPage() {
                       disabled={busy === pkg.id}
                       className="btn-ghost"
                       onClick={() =>
-                        act(pkg.id, () =>
-                          api.post(`/api/plugins/${pkg.id}/${pkg.enabled ? "disable" : "enable"}`),
+                        act(
+                          pkg.id,
+                          () =>
+                            api.post(`/api/plugins/${pkg.id}/${pkg.enabled ? "disable" : "enable"}`),
+                          {
+                            busy: pkg.enabled ? `Disabling ${pkg.name}…` : `Enabling ${pkg.name}…`,
+                            ok: pkg.enabled ? `${pkg.name} disabled.` : `${pkg.name} enabled.`,
+                          },
                         )
                       }
                     >
@@ -202,8 +257,13 @@ export default function InstalledPage() {
                       disabled={busy === pkg.id}
                       className="btn-ghost"
                       onClick={() =>
-                        act(pkg.id, () =>
-                          api.patch(`/api/plugins/${pkg.id}`, { pinned: !pkg.pinned }),
+                        act(
+                          pkg.id,
+                          () => api.patch(`/api/plugins/${pkg.id}`, { pinned: !pkg.pinned }),
+                          {
+                            busy: pkg.pinned ? `Unpinning ${pkg.name}…` : `Pinning ${pkg.name}…`,
+                            ok: pkg.pinned ? `${pkg.name} unpinned.` : `${pkg.name} pinned.`,
+                          },
                         )
                       }
                     >
@@ -236,10 +296,20 @@ export default function InstalledPage() {
                           : "Move files to .persistent/ and leave a symlink in plugins/ (bootstrap copies the link only)"
                       }
                       onClick={() =>
-                        act(pkg.id, () =>
-                          api.post(
-                            `/api/plugins/${pkg.id}/${pkg.live_only ? "normal" : "persistent"}`,
-                          ),
+                        act(
+                          pkg.id,
+                          () =>
+                            api.post(
+                              `/api/plugins/${pkg.id}/${pkg.live_only ? "normal" : "persistent"}`,
+                            ),
+                          {
+                            busy: pkg.live_only
+                              ? `Moving ${pkg.name} back to plugins…`
+                              : `Making ${pkg.name} persistent…`,
+                            ok: pkg.live_only
+                              ? `${pkg.name} is a normal plugins install.`
+                              : `${pkg.name} marked persistent.`,
+                          },
                         )
                       }
                     >
@@ -252,7 +322,14 @@ export default function InstalledPage() {
                         className="btn-danger text-xs px-2 py-1"
                         onClick={() => {
                           if (confirm(`Uninstall ${pkg.full_name}?`)) {
-                            act(pkg.id, () => api.delete(`/api/plugins/${pkg.id}`));
+                            act(
+                              pkg.id,
+                              () => api.delete(`/api/plugins/${pkg.id}`),
+                              {
+                                busy: `Uninstalling ${pkg.name}…`,
+                                ok: `${pkg.name} uninstalled.`,
+                              },
+                            );
                           }
                         }}
                       >
@@ -280,7 +357,10 @@ export default function InstalledPage() {
               const form = new FormData();
               form.append("file", importFile);
               if (importName.trim()) form.append("full_name", importName.trim());
-              act(-1, () => api.upload("/api/plugins/import", form)).then(() => {
+              act(-1, () => api.upload("/api/plugins/import", form), {
+                busy: `Importing ${importFile.name}…`,
+                ok: `Imported ${importFile.name}.`,
+              }).then(() => {
                 setImportOpen(false);
                 setImportFile(null);
                 setImportName("");
@@ -335,11 +415,17 @@ export default function InstalledPage() {
             className="w-full max-w-lg rounded-2xl bg-paper p-6"
             onSubmit={(e) => {
               e.preventDefault();
-              act(linkForm.id, () =>
-                api.post(`/api/plugins/${linkForm.id}/link`, {
-                  source: linkForm.source,
-                  full_name: linkForm.full_name,
-                }),
+              act(
+                linkForm.id,
+                () =>
+                  api.post(`/api/plugins/${linkForm.id}/link`, {
+                    source: linkForm.source,
+                    full_name: linkForm.full_name,
+                  }),
+                {
+                  busy: `Linking to ${linkForm.full_name}…`,
+                  ok: `Linked to ${linkForm.full_name}.`,
+                },
               ).then(() => setLinkForm(null));
             }}
           >

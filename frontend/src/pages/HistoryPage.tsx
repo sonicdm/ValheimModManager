@@ -44,9 +44,11 @@ export default function HistoryPage() {
           <option value="">All actions</option>
           {[
             "scan",
+            "package_refresh",
             "install",
             "uninstall",
             "update",
+            "update_check",
             "config_edit",
             "backup",
             "rollback",

@@ -79,6 +79,8 @@ export type DashboardStats = {
   supervisor_status?: string | null;
   supervisor_configured: boolean;
   restart_required: boolean;
+  scan_in_progress?: boolean;
+  package_refresh_in_progress?: boolean;
   recent_activity: Activity[];
   pending_updates: PendingUpdate[];
 };

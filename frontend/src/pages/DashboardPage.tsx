@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, DashboardStats } from "../api/client";
+import { api, DashboardStats, PendingUpdate } from "../api/client";
+import { StatusToast, useStatusToast } from "../components/StatusToast";
 import { formatLocalDateTime } from "../lib/time";
 
 function Stat({ label, value, hint }: { label: string; value: string | number; hint?: string }) {
@@ -18,6 +19,7 @@ export default function DashboardPage() {
   const [serverStatus, setServerStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const toast = useStatusToast();
 
   const load = useCallback(async () => {
     setStats(await api.get<DashboardStats>("/api/dashboard"));
@@ -38,14 +40,26 @@ export default function DashboardPage() {
     loadServerStatus();
   }, [load, loadServerStatus]);
 
+  useEffect(() => {
+    function onScanDone() {
+      load().catch(() => undefined);
+    }
+    window.addEventListener("vmm:scan-done", onScanDone);
+    return () => window.removeEventListener("vmm:scan-done", onScanDone);
+  }, [load]);
+
   async function scan() {
     setBusy(true);
     setError(null);
+    toast.showBusy("Scanning plugins…");
     try {
       await api.post("/api/scan");
       await load();
+      toast.showOk("Plugin scan finished.");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Scan failed");
+      const msg = e instanceof Error ? e.message : "Scan failed";
+      setError(msg);
+      toast.showError(msg);
     } finally {
       setBusy(false);
     }
@@ -53,11 +67,24 @@ export default function DashboardPage() {
 
   async function checkUpdates() {
     setBusy(true);
+    setError(null);
+    toast.showBusy("Refreshing store indexes and checking for updates…");
     try {
-      await api.post("/api/updates/check");
+      const pending = await api.post<PendingUpdate[]>("/api/updates/check");
       await load();
+      if (pending.length === 0) {
+        toast.showOk("Indexes checked — no updates available.");
+      } else {
+        toast.showOk(
+          pending.length === 1
+            ? `Found 1 update: ${pending[0].full_name}.`
+            : `Found ${pending.length} updates.`,
+        );
+      }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Update check failed");
+      const msg = e instanceof Error ? e.message : "Update check failed";
+      setError(msg);
+      toast.showError(msg);
     } finally {
       setBusy(false);
     }
@@ -65,12 +92,17 @@ export default function DashboardPage() {
 
   async function restart() {
     setBusy(true);
+    setError(null);
+    toast.showBusy("Restarting server (stop → bootstrap sync → start)…");
     try {
       await api.post("/api/server/restart");
       await loadServerStatus();
       await load();
+      toast.showOk("Restart + sync finished.");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Restart failed");
+      const msg = e instanceof Error ? e.message : "Restart failed";
+      setError(msg);
+      toast.showError(msg);
     } finally {
       setBusy(false);
     }
@@ -90,27 +122,19 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-8">
+      <StatusToast message={toast.message} tone={toast.tone} busy={toast.busy} />
+
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="text-sm text-bark/70">Server status</p>
           <p className="font-display text-3xl text-ink">{online}</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            disabled={busy}
-            onClick={scan}
-            className="btn-primary"
-          >
-            Scan plugins
+          <button type="button" disabled={busy} onClick={scan} className="btn-primary">
+            {busy && toast.message?.startsWith("Scanning") ? "Scanning…" : "Scan plugins"}
           </button>
-          <button
-            type="button"
-            disabled={busy}
-            onClick={checkUpdates}
-            className="btn-secondary"
-          >
-            Check updates
+          <button type="button" disabled={busy} onClick={checkUpdates} className="btn-secondary">
+            {busy && toast.message?.includes("indexes") ? "Checking…" : "Check updates"}
           </button>
           {stats.supervisor_configured && (
             <button
@@ -119,12 +143,15 @@ export default function DashboardPage() {
               onClick={restart}
               className="btn-secondary border-ember/40 bg-ember/10 text-ember hover:bg-ember/20"
             >
-              Restart + sync
+              {busy && toast.message?.startsWith("Restarting") ? "Restarting…" : "Restart + sync"}
             </button>
           )}
         </div>
       </div>
 
+      <p className="text-xs text-bark/50">
+        Check updates also refreshes store indexes when they are more than a few minutes old.
+      </p>
       {stats.restart_required && (
         <div className="rounded-xl border border-ember/30 bg-ember/10 px-4 py-3 text-sm text-ember">
           Plugin or config changes are waiting. Restart + sync stops the game, runs valheim-bootstrap

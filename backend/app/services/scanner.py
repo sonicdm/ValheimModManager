@@ -14,9 +14,6 @@ from .dll_meta import read_bepinex_plugin_metadata
 from .live_sync import live_only_plugin_names, path_is_under_live
 from .settings_service import log_activity, set_setting
 
-# Generated / runtime trees inside live-only plugins — skip for ownership inventory.
-_RUNTIME_DIR_NAMES = frozenset({"map_data", "cache", "logs", ".git", "__pycache__"})
-
 
 @dataclass
 class ScannedPlugin:
@@ -122,22 +119,16 @@ def _find_configs(config_dir: Path, guid: str | None, name: str | None) -> list[
     return sorted(set(matches))
 
 
-def _collect_files(folder: Path, root: Path, *, skip_runtime: bool = False) -> list[str]:
+def _collect_top_level_files(folder: Path, root: Path) -> list[str]:
+    """Package-root payload only (DLL, manifest, README, icon, …) — never recurse."""
     files: list[str] = []
     try:
-        iterator = folder.rglob("*")
+        entries = folder.iterdir()
     except OSError:
         return files
-    for path in iterator:
+    for path in entries:
         if not _safe_is_file(path) or _safe_is_symlink(path):
             continue
-        if skip_runtime:
-            try:
-                parts = path.relative_to(folder).parts
-            except ValueError:
-                continue
-            if any(part.lower() in _RUNTIME_DIR_NAMES for part in parts):
-                continue
         try:
             files.append(_rel(root, path))
         except (ValueError, OSError):
@@ -145,33 +136,85 @@ def _collect_files(folder: Path, root: Path, *, skip_runtime: bool = False) -> l
     return sorted(files)
 
 
+def _glob_dlls(folder: Path, pattern: str) -> list[Path]:
+    try:
+        return [p for p in folder.glob(pattern) if _safe_is_file(p)]
+    except OSError:
+        return []
+
+
+def _find_plugin_dlls(folder: Path, *, root_only: bool = False) -> tuple[list[Path], list[Path]]:
+    """Locate *.dll / *.dll.disabled via glob.
+
+    Package root first (Thunderstore-style flat packs). Nested rglob only when
+    there is no root DLL and the caller allows it (folders without a manifest).
+    """
+    active = _glob_dlls(folder, "*.dll")
+    disabled = _glob_dlls(folder, "*.dll.disabled")
+    if active or disabled or root_only:
+        return active, disabled
+    try:
+        active = [p for p in folder.rglob("*.dll") if _safe_is_file(p)]
+        disabled = [p for p in folder.rglob("*.dll.disabled") if _safe_is_file(p)]
+    except OSError:
+        return [], []
+    return active, disabled
+
+
+def _pick_plugin_metadata(
+    dlls: list[Path], *, prefer_name: str | None = None
+) -> tuple[str | None, str | None, str | None]:
+    """One folder = one mod. Among many DLLs, pick a single BepInEx plugin identity."""
+    hits: list[tuple[Path, object]] = []
+    for dll in dlls:
+        m = read_bepinex_plugin_metadata(str(dll))
+        if m.guid or m.name:
+            hits.append((dll, m))
+    if not hits:
+        return None, None, None
+
+    if prefer_name:
+        key = prefer_name.lower().replace(" ", "")
+        for dll, m in hits:
+            stem = dll.stem.lower().replace(" ", "")
+            meta_name = (getattr(m, "name", None) or "").lower().replace(" ", "")
+            if stem == key or meta_name == key:
+                return m.guid, m.name, m.version
+
+    m = hits[0][1]
+    return m.guid, m.name, m.version
+
+
 def _scan_folder(
     entry: Path,
     *,
     files_root: Path,
     config_dir: Path,
-    skip_runtime: bool = False,
 ) -> ScannedPlugin:
+    """Scan one package directory as a single mod (never one-mod-per-DLL).
+
+    Unit of packaging is the folder. ``manifest.json`` (if present) is authoritative
+    for name/version/deps; DLLs only enrich guid / enabled state.
+    """
+    # Do not rglob("*") — only root payload + targeted *.dll globs. Managed installs
+    # already record full zip membership for uninstall/backup.
     manifest = _load_manifest(entry)
-    files = _collect_files(entry, files_root, skip_runtime=skip_runtime)
-    dlls = [
-        d
-        for d in entry.rglob("*.dll")
-        if not any(part.lower() in _RUNTIME_DIR_NAMES for part in d.relative_to(entry).parts)
-    ]
-    guid = name = version = None
-    for dll in dlls:
-        if dll.name.endswith(".dll.disabled"):
+    files = _collect_top_level_files(entry, files_root)
+    dlls_active, dlls_disabled = _find_plugin_dlls(entry, root_only=manifest is not None)
+    for dll in dlls_active + dlls_disabled:
+        try:
+            rel = _rel(files_root, dll)
+        except (ValueError, OSError):
             continue
-        m = read_bepinex_plugin_metadata(str(dll))
-        if m.guid or m.name:
-            guid, name, version = m.guid, m.name, m.version
-            break
+        if rel not in files:
+            files.append(rel)
+    files = sorted(files)
+
+    prefer = (manifest or {}).get("name") if manifest else None
+    guid, name, version = _pick_plugin_metadata(dlls_active, prefer_name=prefer)
 
     enabled = True
-    disabled_dlls = [d for d in entry.rglob("*.dll.disabled")]
-    active_dlls = [d for d in dlls if not d.name.endswith(".dll.disabled")]
-    if disabled_dlls and not active_dlls:
+    if dlls_disabled and not dlls_active:
         enabled = False
 
     if manifest:
@@ -208,7 +251,6 @@ def _scan_folder(
         config_files=_find_configs(config_dir, guid, name),
     )
 
-
 def scan_plugins(settings: Settings | None = None) -> list[ScannedPlugin]:
     settings = settings or get_settings()
     plugins_dir = settings.plugins_dir
@@ -238,6 +280,9 @@ def scan_plugins(settings: Settings | None = None) -> list[ScannedPlugin]:
             seen_names.add(entry.name.lower())
             results.append(scanned)
 
+        # Loose DLLs directly under plugins/ are each their own unmanaged mod.
+        # DLLs inside a package folder are never split out here — folders are
+        # already one ScannedPlugin from _scan_folder above.
         folder_names = {r.name.lower().replace(" ", "") for r in results}
         folder_guids = {r.plugin_guid.lower() for r in results if r.plugin_guid}
         try:
@@ -310,9 +355,7 @@ def scan_plugins(settings: Settings | None = None) -> list[ScannedPlugin]:
         entry = settings.persistent_dir / name
         if not _safe_is_dir(entry):
             continue
-        scanned = _scan_folder(
-            entry, files_root=settings.persistent_dir, config_dir=config_dir, skip_runtime=True
-        )
+        scanned = _scan_folder(entry, files_root=settings.persistent_dir, config_dir=config_dir)
         scanned.full_name = name
         results.append(scanned)
 
@@ -346,7 +389,7 @@ def package_present_on_disk(pkg: InstalledPackage, settings: Settings) -> bool:
 
 
 def persist_scan(
-    db: Session, settings: Settings | None = None
+    db: Session, settings: Settings | None = None, *, reason: str = "manual"
 ) -> tuple[list[InstalledPackage], list[str]]:
     settings = settings or get_settings()
     scanned = scan_plugins(settings)
@@ -480,13 +523,14 @@ def persist_scan(
         db.delete(pkg)
 
     set_setting(db, "last_scan_at", datetime.now(timezone.utc).isoformat())
+    label = "Startup scan" if reason == "startup" else "Plugin scan"
     log_activity(
         db,
         "scan",
         result="ok",
-        message=f"Scanned {len(result_packages)} plugins"
+        message=f"{label} finished: {len(result_packages)} plugins"
         + (f"; pruned {len(pruned)} missing" if pruned else ""),
-        details={"count": len(result_packages), "pruned": pruned},
+        details={"count": len(result_packages), "pruned": pruned, "reason": reason},
     )
     db.commit()
     for pkg in result_packages:

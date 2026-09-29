@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime
 from typing import Annotated, Any
 
@@ -57,6 +58,7 @@ from ..services import supervisor
 from ..services import updates as update_service
 from ..services.settings_service import get_all_settings, get_setting, log_activity, update_settings
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api")
 
 
@@ -179,6 +181,7 @@ def dashboard(
     activity = db.query(ActivityEvent).order_by(ActivityEvent.timestamp.desc()).limit(20).all()
     last_scan = get_setting(db, "last_scan_at")
     last_check = get_setting(db, "last_update_check_at")
+    jobs = update_service.job_status_snapshot()
     # Do not call Supervisor here — DNS/connect stalls made the whole page feel hung.
     # Frontend loads /api/server/status separately.
     return DashboardStats(
@@ -193,6 +196,8 @@ def dashboard(
         supervisor_status=None,
         supervisor_configured=supervisor.supervisor_configured(db),
         restart_required=bool(get_setting(db, "restart_required", False)),
+        scan_in_progress=bool(jobs.get("scan_in_progress")),
+        package_refresh_in_progress=bool(jobs.get("package_refresh_in_progress")),
         recent_activity=[ActivityOut.model_validate(a) for a in activity],
         pending_updates=[PendingUpdateOut.model_validate(p) for p in pending],
     )
@@ -236,7 +241,10 @@ def scan(
     user: Annotated[AdminUser, Depends(_auth_user)],
     db: Annotated[Session, Depends(get_db)],
 ) -> ScanResult:
-    packages, pruned = scanner.persist_scan(db)
+    from ..services.job_status import scan_running
+
+    with scan_running():
+        packages, pruned = scanner.persist_scan(db, reason="manual")
     pending = {
         f"{p.source}:{p.full_name}": p.target_version
         for p in db.query(PendingUpdate).filter(PendingUpdate.status.in_(["queued", "deferred"])).all()
@@ -560,10 +568,24 @@ async def refresh_packages(
     user: Annotated[AdminUser, Depends(_auth_user)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict[str, Any]:
-    counts = {}
+    counts: dict[str, int] = {}
+    errors: dict[str, str] = {}
     for source in package_service.enabled_sources(db):
-        counts[source] = await package_service.refresh_source(source, db)
-    return {"counts": counts}
+        try:
+            counts[source] = await package_service.refresh_source(source, db)
+        except Exception as exc:
+            logger.exception("Package index refresh failed for %s", source)
+            errors[source] = str(exc)
+            log_activity(
+                db,
+                "package_refresh",
+                source=source,
+                result="error",
+                message=f"Refresh failed for {source}: {exc}",
+            )
+    if errors and not counts:
+        raise HTTPException(502, f"Package index refresh failed: {errors}")
+    return {"counts": counts, "errors": errors or None}
 
 
 @router.post("/packages/preview", response_model=InstallPreview)

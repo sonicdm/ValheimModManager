@@ -101,7 +101,7 @@ After login you get seven pages. Day-to-day work is mostly **Discover → Instal
 ### Dashboard
 
 - **Scan plugins** — Walks `config/bepinex` and updates the managed list. Prunes packages that disappeared from disk. Also runs once automatically when the manager process starts; use the button after you change files outside the UI.
-- **Check updates** — Compares installed managed mods against Thunderstore/Hexium indexes and shows pending updates.
+- **Check updates** — Re-fetches Thunderstore/Hexium indexes when they are empty or older than a few minutes (default 5, setting `update_check_index_max_age_minutes`; `0` = always), then compares installed managed mods and shows pending updates.
 - **Restart + sync** — Stops `valheim-server`, runs `valheim-bootstrap` (copies plugins/patchers into the live BepInEx tree), then starts the server again. Use this after installs, uninstalls, config changes that need a reload, or **Make persistent**.
 
 Also shows server status, counts, pending updates, maintenance schedule (local wall-clock), and recent activity.
@@ -159,7 +159,7 @@ Lists BepInEx and mod `.cfg` files under the config tree. Open one to edit (stru
 
 ### History and Backups
 
-- **History** — Audit log of installs, uninstalls, scans, restarts, settings changes, and errors.
+- **History** — Audit log of installs, uninstalls, package index refreshes, startup/manual plugin scans, restarts, settings changes, and errors.
 - **Backups** — Create or restore zip backups of managed plugin state before risky upgrades.
 
 ### Settings

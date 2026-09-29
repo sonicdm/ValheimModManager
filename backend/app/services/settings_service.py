@@ -20,6 +20,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "hexium_enabled": True,
     "package_refresh_minutes": 60,
     "update_check_minutes": 60,
+    # Manual "Check updates" re-fetches store indexes if older than this (minutes). 0 = always.
+    "update_check_index_max_age_minutes": 5,
     "auto_install_updates": True,
     "maintenance_enabled": True,
     "maintenance_hour": 4,

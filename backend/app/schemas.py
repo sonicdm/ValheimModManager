@@ -68,6 +68,8 @@ class DashboardStats(BaseModel):
     supervisor_status: str | None = None
     supervisor_configured: bool
     restart_required: bool
+    scan_in_progress: bool = False
+    package_refresh_in_progress: bool = False
     recent_activity: list["ActivityOut"] = []
     pending_updates: list["PendingUpdateOut"] = []
 

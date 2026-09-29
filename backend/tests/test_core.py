@@ -252,6 +252,105 @@ def test_category_include_exclude_filters():
     assert _matches_category_filters(server, include=[], exclude=[])
 
 
+def test_search_normalizes_underscores_and_ranks_name_hits(monkeypatch):
+    """Unquoted terms are fuzzy (_,-/space); quoted phrases are exact substrings."""
+    from app.services import packages as pkgmod
+    from app.services.packages import PackageInfo, search_packages
+
+    upgrade = PackageInfo(
+        source="thunderstore",
+        name="Upgrade_World",
+        full_name="JereKuusela-Upgrade_World",
+        owner="JereKuusela",
+        description="A tool which can add new content to already explored areas.",
+        categories=["Server-side", "Client-side"],
+        downloads=367896,
+    )
+    mention = PackageInfo(
+        source="thunderstore",
+        name="Multiplayer_Location_Rework_Tame",
+        full_name="HivemindVWE-Multiplayer_Location_Rework_Tame",
+        owner="HivemindVWE",
+        description="Pair with upgrade world during genloc.",
+        categories=["Modpacks", "Server-side"],
+        downloads=502,
+    )
+    unrelated = PackageInfo(
+        source="thunderstore",
+        name="Jotunn",
+        full_name="ValheimModding-Jotunn",
+        owner="ValheimModding",
+        description="Library",
+        categories=["Server-side"],
+        downloads=999999,
+    )
+    monkeypatch.setattr(
+        pkgmod,
+        "get_cached_packages",
+        lambda source: {
+            upgrade.full_name: upgrade,
+            mention.full_name: mention,
+            unrelated.full_name: unrelated,
+        }
+        if source == "thunderstore"
+        else {},
+    )
+
+    hits = search_packages(
+        db=None,  # type: ignore[arg-type]
+        query="Upgrade World",
+        source="thunderstore",
+        include=["Server-side"],
+        limit=10,
+    )
+    assert [p.full_name for p in hits] == [
+        "JereKuusela-Upgrade_World",
+        "HivemindVWE-Multiplayer_Location_Rework_Tame",
+    ]
+
+    assert (
+        search_packages(
+            db=None,  # type: ignore[arg-type]
+            query="upgrade_world",
+            source="thunderstore",
+            include=[],
+            limit=5,
+        )[0].full_name
+        == "JereKuusela-Upgrade_World"
+    )
+
+    # Quoted: require the literal phrase (space ≠ underscore)
+    exact_space = search_packages(
+        db=None,  # type: ignore[arg-type]
+        query='"upgrade world"',
+        source="thunderstore",
+        include=[],
+        limit=10,
+    )
+    assert [p.full_name for p in exact_space] == [
+        "HivemindVWE-Multiplayer_Location_Rework_Tame",
+    ]
+
+    exact_under = search_packages(
+        db=None,  # type: ignore[arg-type]
+        query='"Upgrade_World"',
+        source="thunderstore",
+        include=[],
+        limit=10,
+    )
+    assert [p.full_name for p in exact_under] == ["JereKuusela-Upgrade_World"]
+
+    # Mix: fuzzy owner + exact package name
+    mixed = search_packages(
+        db=None,  # type: ignore[arg-type]
+        query='jere "Upgrade_World"',
+        source="thunderstore",
+        include=[],
+        limit=10,
+    )
+    assert [p.full_name for p in mixed] == ["JereKuusela-Upgrade_World"]
+
+
 def test_scan_plugins_skips_broken_plugin_links_and_reads_persistent(tmp_path: Path, monkeypatch):
     from app.services import scanner as scanner_mod
     from app.services.live_sync import VALHEIM_CONFIG_BEPINEX
@@ -283,6 +382,68 @@ def test_scan_plugins_skips_broken_plugin_links_and_reads_persistent(tmp_path: P
     assert "WebMap" in names
 
 
+def test_scan_folder_uses_root_glob_not_full_tree(tmp_path: Path, monkeypatch):
+    """Scan must not inventory every generated file — root glob + manifest only."""
+    from app.services import scanner as scanner_mod
+
+    pkg = tmp_path / "plugins" / "WebMap"
+    tiles = pkg / "map_data" / "deep"
+    tiles.mkdir(parents=True)
+    (pkg / "manifest.json").write_text(
+        '{"name":"WebMap","version_number":"2.0.0","dependencies":[]}',
+        encoding="utf-8",
+    )
+    (pkg / "WebMap.dll").write_bytes(b"MZ")
+    (pkg / "README.md").write_text("hi", encoding="utf-8")
+    for i in range(200):
+        (tiles / f"tile_{i}.png").write_bytes(b"png")
+
+    monkeypatch.setattr(
+        scanner_mod,
+        "read_bepinex_plugin_metadata",
+        lambda *_a, **_k: type("M", (), {"guid": "com.webmap", "name": "WebMap", "version": "2.0.0"})(),
+    )
+    scanned = scanner_mod._scan_folder(pkg, files_root=tmp_path / "plugins", config_dir=tmp_path / "config")
+    assert scanned.version == "2.0.0"
+    assert scanned.plugin_guid == "com.webmap"
+    assert any(f.endswith("WebMap.dll") for f in scanned.files)
+    assert any(f.endswith("manifest.json") for f in scanned.files)
+    assert not any("map_data" in f or f.endswith(".png") for f in scanned.files)
+
+
+def test_scan_multi_dll_folder_is_single_mod(tmp_path: Path, monkeypatch):
+    """A package folder is one mod even when it ships several DLLs."""
+    from app.services import scanner as scanner_mod
+
+    plugins = tmp_path / "plugins"
+    pkg = plugins / "Author-CoolMod"
+    pkg.mkdir(parents=True)
+    (pkg / "manifest.json").write_text(
+        '{"name":"CoolMod","version_number":"1.2.3","dependencies":[]}',
+        encoding="utf-8",
+    )
+    (pkg / "CoolMod.dll").write_bytes(b"MZ")
+    (pkg / "CoolMod.Lib.dll").write_bytes(b"MZ")
+    (pkg / "0Harmony.dll").write_bytes(b"MZ")
+
+    def fake_meta(path: str, **_k):
+        stem = Path(path).stem
+        if stem == "CoolMod":
+            return type("M", (), {"guid": "com.cool", "name": "CoolMod", "version": "1.2.3"})()
+        if stem == "CoolMod.Lib":
+            return type("M", (), {"guid": "com.cool.lib", "name": "CoolLib", "version": "9.9.9"})()
+        return type("M", (), {"guid": None, "name": None, "version": None})()
+
+    monkeypatch.setattr(scanner_mod, "read_bepinex_plugin_metadata", fake_meta)
+    settings = Settings(data_dir=tmp_path / "data", bepinex_root=tmp_path, live_plugins_root=None)
+    results = scanner_mod.scan_plugins(settings)
+    assert len(results) == 1
+    assert results[0].name == "CoolMod"
+    assert results[0].version == "1.2.3"
+    assert results[0].plugin_guid == "com.cool"
+    assert results[0].full_name == "Author-CoolMod"
+
+
 def test_job_scan_plugins_runs_persist_scan(monkeypatch):
     from app.services import updates as updates_mod
 
@@ -295,12 +456,18 @@ def test_job_scan_plugins_runs_persist_scan(monkeypatch):
     monkeypatch.setattr(updates_mod, "get_session", lambda: FakeSession())
     monkeypatch.setattr(
         updates_mod,
+        "log_activity",
+        lambda *a, **k: called.append(("log", k.get("message") or a)),
+    )
+    monkeypatch.setattr(
+        updates_mod,
         "persist_scan",
-        lambda db: (called.append(("scan", db)) or ([], [])),
+        lambda db, settings=None, reason="manual": (called.append(("scan", db, reason)) or ([], [])),
     )
 
     updates_mod.job_scan_plugins()
-    assert called[0][0] == "scan"
+    assert any(isinstance(c, tuple) and c[0] == "scan" for c in called)
+    assert any(isinstance(c, tuple) and c[0] == "log" for c in called)
     assert called[-1] == "close"
 
 
@@ -399,4 +566,38 @@ def test_persist_scan_prunes_missing_managed(tmp_path: Path, monkeypatch):
     assert "KeepMe" in names
     assert "Author-WebMap" in pruned
     assert any(p.full_name == "KeepMe" for p in result)
+    db.close()
+
+def test_package_index_needs_refresh_respects_age(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from app.database import Base
+    from app.models import PackageCacheMeta
+    from app.services import updates as updates_mod
+    from app.services import packages as packages_mod
+
+    engine = create_engine(f"sqlite:///{tmp_path / 't.db'}")
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+
+    monkeypatch.setattr(packages_mod, "get_cached_packages", lambda source: {"X": object()})
+
+    assert updates_mod._package_index_needs_refresh(db, "thunderstore", 5) is True
+
+    db.add(
+        PackageCacheMeta(
+            source="thunderstore",
+            last_refreshed_at=datetime.now(timezone.utc) - timedelta(minutes=1),
+            package_count=1,
+        )
+    )
+    db.commit()
+    assert updates_mod._package_index_needs_refresh(db, "thunderstore", 5) is False
+
+    meta = db.get(PackageCacheMeta, "thunderstore")
+    meta.last_refreshed_at = datetime.now(timezone.utc) - timedelta(minutes=10)
+    db.commit()
+    assert updates_mod._package_index_needs_refresh(db, "thunderstore", 5) is True
+    assert updates_mod._package_index_needs_refresh(db, "thunderstore", 0) is True
     db.close()

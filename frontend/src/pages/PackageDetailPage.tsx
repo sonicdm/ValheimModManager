@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, InstalledPackage, Package } from "../api/client";
+import { StatusToast, useStatusToast } from "../components/StatusToast";
 import { formatLocalDate } from "../lib/time";
 
 type InstallPreviewResponse = {
@@ -53,6 +54,7 @@ export default function PackageDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<BusyAction>(null);
   const [statusLine, setStatusLine] = useState<string | null>(null);
+  const toast = useStatusToast(4500);
   const [elapsed, setElapsed] = useState(0);
   const [installed, setInstalled] = useState<InstalledPackage[] | null>(null);
   const [docTab, setDocTab] = useState<DocKind>("readme");
@@ -141,6 +143,7 @@ export default function PackageDetailPage() {
     setError(null);
     setInstalled(null);
     setStatusLine("Building install plan…");
+    toast.showBusy("Building install plan…");
     try {
       const result = await api.post<InstallPreviewResponse>("/api/packages/preview", {
         source,
@@ -149,9 +152,12 @@ export default function PackageDetailPage() {
       });
       setPreview(result);
       setStatusLine(null);
+      toast.showOk("Install plan ready.");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Preview failed");
+      const msg = e instanceof Error ? e.message : "Preview failed";
+      setError(msg);
       setStatusLine(null);
+      toast.showError(msg);
     } finally {
       setBusy(null);
     }
@@ -162,6 +168,7 @@ export default function PackageDetailPage() {
     setError(null);
     setInstalled(null);
     startInstallProgress();
+    toast.showBusy(`Installing ${decoded}…`);
     try {
       const packages = await api.post<InstalledPackage[]>("/api/packages/install", {
         source,
@@ -176,10 +183,17 @@ export default function PackageDetailPage() {
         `/api/packages/${source}/${encodeURIComponent(decoded)}`,
       );
       setPkg(refreshed);
+      toast.showOk(
+        packages.length > 1
+          ? `Installed ${packages.length} packages (including dependencies).`
+          : `Installed ${decoded}.`,
+      );
     } catch (e) {
       clearProgressTimers();
-      setError(e instanceof Error ? e.message : "Install failed");
+      const msg = e instanceof Error ? e.message : "Install failed";
+      setError(msg);
       setStatusLine(null);
+      toast.showError(msg);
     } finally {
       setBusy(null);
     }
@@ -205,6 +219,7 @@ export default function PackageDetailPage() {
 
   return (
     <div className="space-y-6">
+      <StatusToast message={toast.message} tone={toast.tone} busy={toast.busy} />
       <Link to="/discover" className="text-sm text-sea hover:underline">
         ← Discover
       </Link>

@@ -22,14 +22,23 @@ scheduler = AsyncIOScheduler()
 
 def job_scan_plugins() -> None:
     """One-shot disk scan (used at process start)."""
+    from .job_status import scan_running
+
     db = get_session()
     try:
-        packages, pruned = persist_scan(db)
-        logger.info(
-            "Plugin scan finished: %s on disk%s",
-            len(packages),
-            f", pruned {len(pruned)}" if pruned else "",
+        log_activity(
+            db,
+            "scan",
+            result="ok",
+            message="Startup plugin scan started (walking config/bepinex; large persistent packs can take a while)",
         )
+        with scan_running():
+            packages, pruned = persist_scan(db, reason="startup")
+            logger.info(
+                "Plugin scan finished: %s on disk%s",
+                len(packages),
+                f", pruned {len(pruned)}" if pruned else "",
+            )
     except Exception:
         logger.exception("Plugin scan failed")
         try:
@@ -41,16 +50,31 @@ def job_scan_plugins() -> None:
 
 
 async def job_refresh_packages() -> None:
+    from .job_status import package_refresh_running
+
     db = get_session()
     try:
-        for source in enabled_sources(db):
-            try:
-                await refresh_source(source, db)
-            except Exception:
-                logger.exception("Failed refreshing %s", source)
-                log_activity(db, "package_refresh", source=source, result="error", message=f"Refresh failed for {source}")
+        with package_refresh_running():
+            for source in enabled_sources(db):
+                try:
+                    await refresh_source(source, db)
+                except Exception:
+                    logger.exception("Failed refreshing %s", source)
+                    log_activity(
+                        db,
+                        "package_refresh",
+                        source=source,
+                        result="error",
+                        message=f"Refresh failed for {source}",
+                    )
     finally:
         db.close()
+
+
+def job_status_snapshot() -> dict[str, bool]:
+    from .job_status import snapshot
+
+    return snapshot()
 
 
 async def job_check_updates() -> None:
@@ -71,15 +95,17 @@ async def job_maintenance_window() -> None:
 
 async def check_for_updates(db: Session) -> list[PendingUpdate]:
     found: list[PendingUpdate] = []
-    # Ensure caches exist
+    # Refresh Thunderstore/Hexium indexes when empty or older than a short TTL so
+    # the dashboard "Check updates" button is useful after a fresh publish.
+    max_age = int(get_setting(db, "update_check_index_max_age_minutes", 5) or 5)
+    max_age = max(0, max_age)
     for source in enabled_sources(db):
-        from .packages import get_cached_packages
-
-        if not get_cached_packages(source):
-            try:
-                await refresh_source(source, db)
-            except Exception:
-                logger.exception("refresh during update check failed")
+        if not _package_index_needs_refresh(db, source, max_age):
+            continue
+        try:
+            await refresh_source(source, db)
+        except Exception:
+            logger.exception("refresh during update check failed")
 
     for pkg in db.query(InstalledPackage).filter(InstalledPackage.managed.is_(True)).all():
         if pkg.source not in ("thunderstore", "hexium"):
@@ -130,6 +156,25 @@ async def check_for_updates(db: Session) -> list[PendingUpdate]:
     log_activity(db, "update_check", result="ok", message=f"Found {len(found)} updates")
     db.commit()
     return found
+
+
+def _package_index_needs_refresh(db: Session, source: str, max_age_minutes: int) -> bool:
+    """True when the source index is missing or older than max_age_minutes."""
+    from ..models import PackageCacheMeta
+    from .packages import get_cached_packages
+
+    if not get_cached_packages(source):
+        return True
+    if max_age_minutes <= 0:
+        return True
+    meta = db.get(PackageCacheMeta, source)
+    if meta is None or meta.last_refreshed_at is None:
+        return True
+    ts = meta.last_refreshed_at
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    age = datetime.now(timezone.utc) - ts.astimezone(timezone.utc)
+    return age >= timedelta(minutes=max_age_minutes)
 
 
 def _in_maintenance_window(db: Session, now: datetime | None = None) -> bool:
