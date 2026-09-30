@@ -569,6 +569,35 @@ def test_persist_scan_prunes_missing_managed(tmp_path: Path, monkeypatch):
     db.close()
 
 
+def test_resolve_dest_reuses_existing_plugin_folder(tmp_path: Path):
+    """Updates must not create plugins/Team-Mod next to an older short folder name."""
+    from app.models import InstalledPackage
+    from app.services.installer import _resolve_dest
+
+    plugins = tmp_path / "plugins"
+    plugins.mkdir()
+    old = plugins / "PortalAtlas"
+    old.mkdir()
+    settings = Settings(data_dir=tmp_path / "data", bepinex_root=tmp_path, live_plugins_root=None)
+    existing = InstalledPackage(
+        source="thunderstore",
+        full_name="SonicDM-PortalAtlas",
+        name="PortalAtlas",
+        install_path=str(old),
+        managed=True,
+        enabled=True,
+    )
+    dest, root, live_only = _resolve_dest(
+        settings,
+        {"full_name": "SonicDM-PortalAtlas", "name": "PortalAtlas", "source": "thunderstore"},
+        existing,
+    )
+    assert live_only is False
+    assert root == plugins
+    assert dest == old
+    assert not (plugins / "SonicDM-PortalAtlas").exists()
+
+
 def test_persist_scan_skips_duplicate_store_auto_link(tmp_path: Path, monkeypatch):
     """Two folders matching the same remote package must not UNIQUE-crash the scan."""
     from sqlalchemy import create_engine
