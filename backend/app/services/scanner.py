@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,6 +14,8 @@ from ..models import ConfigAssociation, InstalledPackage, OwnedFile, PendingUpda
 from .dll_meta import read_bepinex_plugin_metadata
 from .live_sync import live_only_plugin_names, path_is_under_live
 from .settings_service import log_activity, set_setting
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -394,8 +397,20 @@ def persist_scan(
     settings = settings or get_settings()
     scanned = scan_plugins(settings)
     by_path = {p.install_path: p for p in db.query(InstalledPackage).all()}
+    # (source, full_name) → install_path — prevents two folders linking to one store id
+    claimed: dict[tuple[str, str], str] = {
+        (p.source, p.full_name): p.install_path for p in by_path.values()
+    }
     seen_paths: set[str] = set()
     result_packages: list[InstalledPackage] = []
+
+    def _claim(source: str, full_name: str, install_path: str) -> bool:
+        key = (source, full_name)
+        holder = claimed.get(key)
+        if holder is not None and holder != install_path:
+            return False
+        claimed[key] = install_path
+        return True
 
     for item in scanned:
         seen_paths.add(item.install_path)
@@ -421,8 +436,22 @@ def persist_scan(
                 }:
                     pkg = candidate
         if pkg is None:
+            initial_source = item.source if item.managed else "unmanaged"
+            if not _claim(initial_source, item.full_name, item.install_path):
+                # Extremely rare: two scanned entries want the same local identity.
+                # Keep a unique full_name so the scan can continue.
+                alt_name = f"{item.full_name}@{Path(item.install_path).name}"
+                if not _claim(initial_source, alt_name, item.install_path):
+                    logger.warning(
+                        "Skipping scan entry %s — identity %s/%s already claimed",
+                        item.install_path,
+                        initial_source,
+                        item.full_name,
+                    )
+                    continue
+                item.full_name = alt_name
             pkg = InstalledPackage(
-                source=item.source if item.managed else "unmanaged",
+                source=initial_source,
                 full_name=item.full_name,
                 name=item.name,
                 owner=item.owner,
@@ -436,12 +465,20 @@ def persist_scan(
             )
             db.add(pkg)
             db.flush()
+            by_path[item.install_path] = pkg
         else:
             # Preserve thunderstore/hexium source if already linked
             if pkg.source not in ("thunderstore", "hexium"):
                 # Do not demote a managed package when revisiting via a weaker match
                 if item.managed or not pkg.managed:
-                    pkg.source = item.source if item.managed else "unmanaged"
+                    new_source = item.source if item.managed else "unmanaged"
+                    if (pkg.source, pkg.full_name) != (new_source, item.full_name):
+                        if _claim(new_source, item.full_name, item.install_path):
+                            old = (pkg.source, pkg.full_name)
+                            if claimed.get(old) == pkg.install_path:
+                                claimed.pop(old, None)
+                            pkg.source = new_source
+                            pkg.full_name = item.full_name
                     pkg.managed = item.managed
             if item.managed or not pkg.managed:
                 pkg.install_path = item.install_path
@@ -474,7 +511,10 @@ def persist_scan(
         for cfg in item.config_files:
             pkg.configs.append(ConfigAssociation(relative_path=cfg))
 
-        # Auto-link local/unmanaged packages to Thunderstore/Hexium when unambiguous
+        # Auto-link local/unmanaged packages to Thunderstore/Hexium when unambiguous.
+        # Never steal a (source, full_name) already claimed by another install path
+        # (e.g. plugins/PortalAtlas and plugins/SonicDM-PortalAtlas both matching
+        # SonicDM-PortalAtlas).
         if pkg.source in ("local", "unmanaged"):
             try:
                 from .packages import match_installed_to_remote
@@ -488,20 +528,32 @@ def persist_scan(
                 )
                 if matched:
                     src, info = matched
-                    pkg.source = src
-                    pkg.full_name = info.full_name
-                    pkg.owner = info.owner or pkg.owner
-                    pkg.managed = True
-                    pkg.package_url = info.package_url
-                    pkg.icon_url = info.icon_url or pkg.icon_url
-                    pkg.description = info.description or pkg.description
-                    if info.latest:
-                        # Keep installed version; only fill deps from matching or latest
-                        ver = next(
-                            (v for v in info.versions if v.version_number == pkg.version),
-                            info.latest,
+                    if _claim(src, info.full_name, pkg.install_path):
+                        old = (pkg.source, pkg.full_name)
+                        if claimed.get(old) == pkg.install_path:
+                            claimed.pop(old, None)
+                        pkg.source = src
+                        pkg.full_name = info.full_name
+                        pkg.owner = info.owner or pkg.owner
+                        pkg.managed = True
+                        pkg.package_url = info.package_url
+                        pkg.icon_url = info.icon_url or pkg.icon_url
+                        pkg.description = info.description or pkg.description
+                        if info.latest:
+                            # Keep installed version; only fill deps from matching or latest
+                            ver = next(
+                                (v for v in info.versions if v.version_number == pkg.version),
+                                info.latest,
+                            )
+                            pkg.dependencies_json = json.dumps(ver.dependencies)
+                    else:
+                        logger.info(
+                            "Skip auto-link for %s → %s/%s (already installed at %s)",
+                            pkg.install_path,
+                            src,
+                            info.full_name,
+                            claimed.get((src, info.full_name)),
                         )
-                        pkg.dependencies_json = json.dumps(ver.dependencies)
             except Exception:
                 # Matching is best-effort; never fail the scan
                 pass
