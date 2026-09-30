@@ -267,7 +267,7 @@ async def run_maintenance(db: Session) -> None:
             log_activity(db, "update", package=p.full_name, source=p.source, result="error", message=str(exc))
         db.commit()
 
-    if get_setting(db, "restart_after_updates", True) and supervisor_configured(db):
+    if get_setting(db, "restart_after_updates", False) and supervisor_configured(db):
         result = restart_server(db)
         log_activity(
             db,
@@ -277,6 +277,8 @@ async def run_maintenance(db: Session) -> None:
         )
         if result.get("ok"):
             set_setting(db, "restart_required", False)
+    elif any(p.status == "done" for p in pending):
+        set_setting(db, "restart_required", True)
 
 
 def configure_scheduler(*, force: bool = False) -> None:

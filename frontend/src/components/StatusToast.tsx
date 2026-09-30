@@ -26,7 +26,7 @@ export function StatusToast({
   if (!message) return null;
   return (
     <div
-      className={`fixed bottom-6 right-6 z-50 max-w-sm rounded-xl border px-4 py-3 text-sm ${toneClass[tone]}`}
+      className={`fixed bottom-6 right-6 z-50 max-w-md rounded-xl border px-4 py-3 text-sm ${toneClass[tone]}`}
       role="status"
       aria-live="polite"
     >
@@ -37,7 +37,7 @@ export function StatusToast({
             aria-hidden
           />
         )}
-        <p className="leading-snug">{message}</p>
+        <p className="whitespace-pre-line leading-snug">{message}</p>
       </div>
       {busy && (
         <div className="mt-3 h-1 overflow-hidden rounded-full bg-mist">

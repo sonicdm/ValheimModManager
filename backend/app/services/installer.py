@@ -168,6 +168,10 @@ def _resolve_dest(
 
     Persistent packages install/update under config/bepinex/.persistent with a
     plugins/ symlink; normal packages install under plugins/.
+
+    When updating an already-tracked package, always reuse its current install
+    folder — never create plugins/<Team-Mod> beside an older plugins/<Name>
+    path (that is how PortalAtlas duplicates appear).
     """
     name = item.get("name") or item["full_name"]
     live_folder = resolve_live_only_folder(
@@ -186,6 +190,23 @@ def _resolve_dest(
     if live_folder is not None:
         settings.persistent_dir.mkdir(parents=True, exist_ok=True)
         return live_folder, settings.persistent_dir, True
+
+    if existing and existing.install_path:
+        cur = Path(existing.install_path)
+        try:
+            if cur.is_file():
+                # Loose DLL under plugins/ — promote into a folder on upgrade only
+                # when we do not already own a package directory.
+                if cur.parent == settings.plugins_dir:
+                    return settings.plugins_dir / item["full_name"], settings.plugins_dir, False
+            elif cur.is_dir():
+                try:
+                    cur.relative_to(settings.plugins_dir)
+                    return cur, settings.plugins_dir, False
+                except ValueError:
+                    pass
+        except OSError:
+            pass
 
     dest = settings.plugins_dir / item["full_name"]
     return dest, settings.plugins_dir, False
@@ -232,7 +253,10 @@ def preview_install(db: Session, source: str, full_name: str, version: str | Non
     for item in plan:
         existing = (
             db.query(InstalledPackage)
-            .filter(InstalledPackage.full_name == item["full_name"])
+            .filter(
+                InstalledPackage.full_name == item["full_name"],
+                InstalledPackage.source == item["source"],
+            )
             .first()
         )
         dest_dir, _, live_only = _resolve_dest(settings, item, existing)
@@ -265,7 +289,10 @@ async def install_packages(
     for item in preview["packages"]:
         existing = (
             db.query(InstalledPackage)
-            .filter(InstalledPackage.full_name == item["full_name"])
+            .filter(
+                InstalledPackage.full_name == item["full_name"],
+                InstalledPackage.source == item["source"],
+            )
             .first()
         )
         if existing and existing.managed and existing.version == item["version"] and existing.enabled:

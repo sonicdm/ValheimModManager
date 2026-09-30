@@ -136,6 +136,12 @@ class InstallRequest(BaseModel):
     version: str | None = None
 
 
+class ApplyUpdatesRequest(BaseModel):
+    """Optional filter — omit or empty full_names to apply every queued/deferred update."""
+
+    full_names: list[str] | None = None
+
+
 class InstallPreview(BaseModel):
     packages: list[dict[str, Any]]
     conflicts: list[str] = []

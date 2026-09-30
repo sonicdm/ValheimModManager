@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, InstalledPackage, Package } from "../api/client";
+import RowMenu from "../components/RowMenu";
 import { StatusToast, useStatusToast } from "../components/StatusToast";
+import { summarizeApply, type ApplyResult } from "../lib/updates";
 
 type LinkForm = {
   id: number;
@@ -135,6 +137,42 @@ export default function InstalledPage() {
     }
   }
 
+  async function applyUpdates(fullNames?: string[]) {
+    const label =
+      fullNames?.length === 1
+        ? `Updating ${fullNames[0]}…`
+        : fullNames?.length
+          ? `Updating ${fullNames.length} packages…`
+          : "Updating all pending packages…";
+    setBusy(-2);
+    setError(null);
+    setInfo(null);
+    toast.showBusy(label);
+    try {
+      const data = await api.post<ApplyResult>(
+        "/api/updates/apply",
+        fullNames?.length ? { full_names: fullNames } : {},
+      );
+      await load();
+      const msg = summarizeApply(data);
+      const anyFail = data.results.some((r) => !r.ok);
+      if (anyFail) {
+        setError(msg);
+        setInfo(null);
+        toast.showError(msg);
+      } else {
+        setInfo(msg);
+        toast.showOk(msg);
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Update failed";
+      setError(msg);
+      toast.showError(msg);
+    } finally {
+      setBusy(null);
+    }
+  }
+
   function openLink(pkg: InstalledPackage) {
     const preferred =
       pkg.source === "thunderstore" || pkg.source === "hexium" ? pkg.source : "thunderstore";
@@ -145,6 +183,9 @@ export default function InstalledPage() {
       query: pkg.name || pkg.full_name,
     });
   }
+
+  const pendingCount = packages.filter((p) => p.update_available).length;
+  const updating = busy === -2;
 
   return (
     <div className="space-y-4">
@@ -157,7 +198,7 @@ export default function InstalledPage() {
             possible.
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <button
             type="button"
             onClick={() => setImportOpen(true)}
@@ -185,8 +226,24 @@ export default function InstalledPage() {
           </button>
         </div>
       </div>
-      {error && <p className="text-sm text-danger">{error}</p>}
-      {info && <p className="text-sm text-sea">{info}</p>}
+      {error && <p className="whitespace-pre-line text-sm text-danger">{error}</p>}
+      {info && <p className="whitespace-pre-line text-sm text-sea">{info}</p>}
+
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm text-bark/60">
+          {pendingCount
+            ? `${pendingCount} update${pendingCount === 1 ? "" : "s"} available`
+            : "All installed mods are up to date"}
+        </p>
+        <button
+          type="button"
+          disabled={busy !== null || pendingCount === 0}
+          className="btn-secondary border-ember/40 bg-ember/10 text-ember hover:bg-ember/20"
+          onClick={() => applyUpdates()}
+        >
+          {updating ? "Updating…" : "Update all"}
+        </button>
+      </div>
 
       <div className="overflow-x-auto rounded-2xl border border-bark/10 bg-paper/80">
         <table className="min-w-full text-left text-sm">
@@ -233,10 +290,20 @@ export default function InstalledPage() {
                   {pkg.pinned && " · Pinned"}
                 </td>
                 <td className="px-4 py-3">
-                  <div className="flex flex-wrap gap-1">
+                  <div className="flex flex-wrap items-center gap-1">
+                    {pkg.update_available && (
+                      <button
+                        type="button"
+                        disabled={busy !== null}
+                        className="btn-ghost border-ember/30 text-ember"
+                        onClick={() => applyUpdates([pkg.full_name])}
+                      >
+                        Update
+                      </button>
+                    )}
                     <button
                       type="button"
-                      disabled={busy === pkg.id}
+                      disabled={busy === pkg.id || updating}
                       className="btn-ghost"
                       onClick={() =>
                         act(
@@ -254,7 +321,7 @@ export default function InstalledPage() {
                     </button>
                     <button
                       type="button"
-                      disabled={busy === pkg.id}
+                      disabled={busy === pkg.id || updating}
                       className="btn-ghost"
                       onClick={() =>
                         act(
@@ -277,65 +344,63 @@ export default function InstalledPage() {
                         Configure
                       </Link>
                     )}
-                    <button
-                      type="button"
-                      className="btn-ghost text-sea"
-                      onClick={() => openLink(pkg)}
-                    >
-                      {pkg.source === "thunderstore" || pkg.source === "hexium"
-                        ? "Change store"
-                        : "Link store"}
-                    </button>
-                    <button
-                      type="button"
-                      disabled={busy === pkg.id}
-                      className="btn-ghost"
-                      title={
-                        pkg.live_only
-                          ? "Move files back into plugins/ (bootstrap will copy every file)"
-                          : "Move files to .persistent/ and leave a symlink in plugins/ (bootstrap copies the link only)"
-                      }
-                      onClick={() =>
-                        act(
-                          pkg.id,
-                          () =>
-                            api.post(
-                              `/api/plugins/${pkg.id}/${pkg.live_only ? "normal" : "persistent"}`,
-                            ),
-                          {
-                            busy: pkg.live_only
-                              ? `Moving ${pkg.name} back to plugins…`
-                              : `Making ${pkg.name} persistent…`,
-                            ok: pkg.live_only
-                              ? `${pkg.name} is a normal plugins install.`
-                              : `${pkg.name} marked persistent.`,
-                          },
-                        )
-                      }
-                    >
-                      {pkg.live_only ? "Make normal" : "Make persistent"}
-                    </button>
-                    {pkg.managed && (
-                      <button
-                        type="button"
-                        disabled={busy === pkg.id}
-                        className="btn-danger text-xs px-2 py-1"
-                        onClick={() => {
-                          if (confirm(`Uninstall ${pkg.full_name}?`)) {
+                    <RowMenu
+                      disabled={busy === pkg.id || updating}
+                      items={[
+                        {
+                          key: "link",
+                          label:
+                            pkg.source === "thunderstore" || pkg.source === "hexium"
+                              ? "Change store…"
+                              : "Link store…",
+                          onClick: () => openLink(pkg),
+                        },
+                        {
+                          key: "persist",
+                          label: pkg.live_only ? "Make normal" : "Make persistent",
+                          title: pkg.live_only
+                            ? "Move files back into plugins/ (bootstrap will copy every file)"
+                            : "Move files to .persistent/ and leave a symlink in plugins/",
+                          onClick: () =>
                             act(
                               pkg.id,
-                              () => api.delete(`/api/plugins/${pkg.id}`),
+                              () =>
+                                api.post(
+                                  `/api/plugins/${pkg.id}/${pkg.live_only ? "normal" : "persistent"}`,
+                                ),
                               {
-                                busy: `Uninstalling ${pkg.name}…`,
-                                ok: `${pkg.name} uninstalled.`,
+                                busy: pkg.live_only
+                                  ? `Moving ${pkg.name} back to plugins…`
+                                  : `Making ${pkg.name} persistent…`,
+                                ok: pkg.live_only
+                                  ? `${pkg.name} is a normal plugins install.`
+                                  : `${pkg.name} marked persistent.`,
                               },
-                            );
-                          }
-                        }}
-                      >
-                        Uninstall
-                      </button>
-                    )}
+                            ),
+                        },
+                        ...(pkg.managed
+                          ? [
+                              {
+                                key: "uninstall",
+                                label: "Uninstall",
+                                danger: true,
+                                onClick: () => {
+                                  if (confirm(`Uninstall ${pkg.full_name}?`)) {
+                                    act(
+                                      pkg.id,
+                                      () => api.delete(`/api/plugins/${pkg.id}`),
+                                      {
+                                        busy: `Uninstalling ${pkg.name}…`,
+                                        ok: `${pkg.name} uninstalled.`,
+                                      },
+                                    );
+                                  }
+                                },
+                              },
+                            ]
+                          : []),
+                      ]}
+                    />
                   </div>
                 </td>
               </tr>

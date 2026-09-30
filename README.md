@@ -7,7 +7,7 @@ Self-hosted companion for an existing [community-valheim-tools/valheim-server](h
 | Role | Image |
 |---|---|
 | Valheim server | `ghcr.io/community-valheim-tools/valheim-server` |
-| Mod manager | `ghcr.io/sonicdm/valheim-mod-manager:latest` (or pin `:0.1.0`) |
+| Mod manager | `ghcr.io/sonicdm/valheim-mod-manager:latest` (or pin `:0.2.0`) |
 
 The Valheim image is the relocated home of the former [lloesche/valheim-server-docker](https://github.com/lloesche/valheim-server-docker) project (same layout and Supervisor ABI). Legacy `ghcr.io/lloesche/valheim-server` tags remain compatible until they disappear.
 
@@ -92,7 +92,7 @@ docker compose pull
 docker compose up -d
 ```
 
-Pin with `image: ghcr.io/sonicdm/valheim-mod-manager:0.1.0` instead of `:latest` if you want a fixed release.
+Pin with `image: ghcr.io/sonicdm/valheim-mod-manager:0.2.0` instead of `:latest` if you want a fixed release.
 
 ## Usage
 

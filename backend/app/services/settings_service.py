@@ -27,7 +27,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "maintenance_hour": 4,
     "maintenance_minute": 0,
     "backup_before_update": True,
-    "restart_after_updates": True,
+    "restart_after_updates": False,
     "update_pinned_packages": False,
     "update_policy": "all",  # all|selected|notify|manual
     "maintenance_lock": False,

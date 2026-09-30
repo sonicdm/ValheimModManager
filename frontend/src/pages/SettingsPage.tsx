@@ -239,7 +239,7 @@ export default function SettingsPage() {
               checked={Boolean(values.restart_after_updates)}
               onChange={(e) => setField("restart_after_updates", e.target.checked)}
             />
-            Restart after updates
+            Restart after scheduled maintenance updates (manual Update all never restarts)
           </label>
           <label className="flex items-center gap-2 text-sm md:col-span-2">
             <input
