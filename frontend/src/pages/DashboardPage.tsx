@@ -90,6 +90,35 @@ export default function DashboardPage() {
     }
   }
 
+  async function applyAllUpdates() {
+    setBusy(true);
+    setError(null);
+    toast.showBusy("Applying pending updates…");
+    try {
+      const data = await api.post<{
+        results: { full_name: string; ok: boolean }[];
+        restart?: { ok?: boolean } | null;
+      }>("/api/updates/apply", {});
+      await load();
+      await loadServerStatus();
+      const ok = data.results.filter((r) => r.ok).length;
+      const fail = data.results.length - ok;
+      const parts = [`Updated ${ok} package${ok === 1 ? "" : "s"}`];
+      if (fail) parts.push(`${fail} failed`);
+      if (data.restart?.ok) parts.push("server restarted");
+      else if (ok) parts.push("restart + sync when ready");
+      const msg = parts.join(" · ");
+      if (fail) toast.showError(msg);
+      else toast.showOk(msg);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Update failed";
+      setError(msg);
+      toast.showError(msg);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function restart() {
     setBusy(true);
     setError(null);
@@ -169,11 +198,21 @@ export default function DashboardPage() {
 
       <section className="grid gap-6 lg:grid-cols-2">
         <div className="rounded-2xl border border-bark/10 bg-paper/80 p-5">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="font-display text-2xl">Available updates</h2>
-            <Link to="/installed" className="text-sm text-sea hover:underline">
-              Manage
-            </Link>
+            <div className="flex items-center gap-3">
+              <Link to="/installed" className="text-sm text-sea hover:underline">
+                Manage
+              </Link>
+              <button
+                type="button"
+                disabled={busy || stats.pending_updates.length === 0}
+                className="btn-secondary border-ember/40 bg-ember/10 text-ember hover:bg-ember/20"
+                onClick={applyAllUpdates}
+              >
+                {busy && toast.message?.startsWith("Applying") ? "Updating…" : "Update all"}
+              </button>
+            </div>
           </div>
           {stats.pending_updates.length === 0 ? (
             <p className="mt-4 text-sm text-bark/60">No pending updates.</p>

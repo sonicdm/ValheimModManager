@@ -26,6 +26,7 @@ from ..database import get_db
 from ..models import ActivityEvent, AdminUser, InstalledPackage, PendingUpdate
 from ..schemas import (
     ActivityOut,
+    ApplyUpdatesRequest,
     AuthStatus,
     BackupOut,
     ChangePasswordRequest,
@@ -768,11 +769,17 @@ async def check_updates(
 async def apply_updates(
     user: Annotated[AdminUser, Depends(_auth_user)],
     db: Annotated[Session, Depends(get_db)],
+    body: ApplyUpdatesRequest | None = None,
 ) -> dict[str, Any]:
     # Manual apply ignores player gate
     from ..services.settings_service import set_setting
 
     pending = db.query(PendingUpdate).filter(PendingUpdate.status.in_(["queued", "deferred"])).all()
+    if body and body.full_names:
+        wanted = {n.strip() for n in body.full_names if n and n.strip()}
+        pending = [p for p in pending if p.full_name in wanted]
+    if not pending:
+        raise HTTPException(404, "No matching pending updates")
     if get_setting(db, "backup_before_update", True):
         backup_service.create_backup(db, reason="pre-update", label="manual-pre-update")
     results = []
@@ -780,9 +787,25 @@ async def apply_updates(
         try:
             await installer.install_packages(db, p.source, p.full_name, p.target_version)
             p.status = "done"
-            results.append({"full_name": p.full_name, "ok": True})
+            log_activity(
+                db,
+                "update",
+                package=p.full_name,
+                source=p.source,
+                result="ok",
+                message=f"{p.current_version or '?'} → {p.target_version}",
+            )
+            results.append({"full_name": p.full_name, "ok": True, "version": p.target_version})
         except Exception as exc:
             p.status = "failed"
+            log_activity(
+                db,
+                "update",
+                package=p.full_name,
+                source=p.source,
+                result="error",
+                message=str(exc),
+            )
             results.append({"full_name": p.full_name, "ok": False, "error": str(exc)})
         db.commit()
     if get_setting(db, "restart_after_updates", True) and supervisor.supervisor_configured(db):
@@ -790,6 +813,7 @@ async def apply_updates(
         if restart.get("ok"):
             set_setting(db, "restart_required", False)
         return {"results": results, "restart": restart}
+    set_setting(db, "restart_required", True)
     return {"results": results, "restart": None}
 
 
