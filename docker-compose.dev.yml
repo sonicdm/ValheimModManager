@@ -7,11 +7,14 @@
 # Prod stays on :8090 / ValheimModManager. Dev UI: http://localhost:8091
 # Stop only the test instance:
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml stop
+#
+# `ports: !override` replaces the base 8090 mapping (compose merges lists by
+# default, which would try to bind 8090 again and fail if prod is running).
 
 services:
   mod-manager:
     image: valheim-mod-manager:dev
     build: .
     container_name: ValheimModManager-dev
-    ports:
+    ports: !override
       - "${MOD_MANAGER_DEV_PORT:-8091}:8090"
