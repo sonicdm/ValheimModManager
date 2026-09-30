@@ -798,6 +798,7 @@ async def apply_updates(
             results.append({"full_name": p.full_name, "ok": True, "version": p.target_version})
         except Exception as exc:
             p.status = "failed"
+            logger.exception("Update failed for %s@%s", p.full_name, p.source)
             log_activity(
                 db,
                 "update",

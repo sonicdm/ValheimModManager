@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { api, InstalledPackage, Package } from "../api/client";
 import RowMenu from "../components/RowMenu";
 import { StatusToast, useStatusToast } from "../components/StatusToast";
+import { summarizeApply, type ApplyResult } from "../lib/updates";
 
 type LinkForm = {
   id: number;
@@ -10,21 +11,6 @@ type LinkForm = {
   full_name: string;
   query: string;
 };
-
-type ApplyResult = {
-  results: { full_name: string; ok: boolean; version?: string; error?: string }[];
-  restart?: { ok?: boolean; message?: string } | null;
-};
-
-function summarizeApply(data: ApplyResult): string {
-  const ok = data.results.filter((r) => r.ok).length;
-  const fail = data.results.length - ok;
-  const parts = [`Updated ${ok} package${ok === 1 ? "" : "s"}`];
-  if (fail) parts.push(`${fail} failed`);
-  if (data.restart?.ok) parts.push("server restarted");
-  else if (data.results.some((r) => r.ok)) parts.push("restart + sync when ready");
-  return parts.join(" · ");
-}
 
 export default function InstalledPage() {
   const [packages, setPackages] = useState<InstalledPackage[]>([]);
@@ -169,10 +155,15 @@ export default function InstalledPage() {
       );
       await load();
       const msg = summarizeApply(data);
-      setInfo(msg);
       const anyFail = data.results.some((r) => !r.ok);
-      if (anyFail) toast.showError(msg);
-      else toast.showOk(msg);
+      if (anyFail) {
+        setError(msg);
+        setInfo(null);
+        toast.showError(msg);
+      } else {
+        setInfo(msg);
+        toast.showOk(msg);
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Update failed";
       setError(msg);
@@ -235,8 +226,8 @@ export default function InstalledPage() {
           </button>
         </div>
       </div>
-      {error && <p className="text-sm text-danger">{error}</p>}
-      {info && <p className="text-sm text-sea">{info}</p>}
+      {error && <p className="whitespace-pre-line text-sm text-danger">{error}</p>}
+      {info && <p className="whitespace-pre-line text-sm text-sea">{info}</p>}
 
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-bark/60">

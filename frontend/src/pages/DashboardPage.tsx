@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { api, DashboardStats, PendingUpdate } from "../api/client";
 import { StatusToast, useStatusToast } from "../components/StatusToast";
 import { formatLocalDateTime } from "../lib/time";
+import { summarizeApply, type ApplyResult } from "../lib/updates";
 
 function Stat({ label, value, hint }: { label: string; value: string | number; hint?: string }) {
   return (
@@ -95,21 +96,17 @@ export default function DashboardPage() {
     setError(null);
     toast.showBusy("Applying pending updates…");
     try {
-      const data = await api.post<{
-        results: { full_name: string; ok: boolean }[];
-        restart?: { ok?: boolean } | null;
-      }>("/api/updates/apply", {});
+      const data = await api.post<ApplyResult>("/api/updates/apply", {});
       await load();
       await loadServerStatus();
-      const ok = data.results.filter((r) => r.ok).length;
-      const fail = data.results.length - ok;
-      const parts = [`Updated ${ok} package${ok === 1 ? "" : "s"}`];
-      if (fail) parts.push(`${fail} failed`);
-      if (data.restart?.ok) parts.push("server restarted");
-      else if (ok) parts.push("restart + sync when ready");
-      const msg = parts.join(" · ");
-      if (fail) toast.showError(msg);
-      else toast.showOk(msg);
+      const msg = summarizeApply(data);
+      const anyFail = data.results.some((r) => !r.ok);
+      if (anyFail) {
+        setError(msg);
+        toast.showError(msg);
+      } else {
+        toast.showOk(msg);
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Update failed";
       setError(msg);
@@ -187,7 +184,7 @@ export default function DashboardPage() {
           (config → live), then starts the server again.
         </div>
       )}
-      {error && <p className="text-sm text-danger">{error}</p>}
+      {error && <p className="whitespace-pre-line text-sm text-danger">{error}</p>}
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Stat label="Installed" value={stats.installed_count} />
