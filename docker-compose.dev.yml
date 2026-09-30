@@ -10,6 +10,8 @@
 #
 # `ports: !override` replaces the base 8090 mapping (compose merges lists by
 # default, which would try to bind 8090 again and fail if prod is running).
+# `networks: !override` keeps only the Valheim network — dual-homing the
+# project default + babygotboar_default often breaks outbound HTTPS (Thunderstore).
 
 services:
   mod-manager:
@@ -18,3 +20,5 @@ services:
     container_name: ValheimModManager-dev
     ports: !override
       - "${MOD_MANAGER_DEV_PORT:-8091}:8090"
+    networks: !override
+      - valheim
