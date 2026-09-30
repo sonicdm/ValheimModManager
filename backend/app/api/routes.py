@@ -808,12 +808,10 @@ async def apply_updates(
             )
             results.append({"full_name": p.full_name, "ok": False, "error": str(exc)})
         db.commit()
-    if get_setting(db, "restart_after_updates", True) and supervisor.supervisor_configured(db):
-        restart = supervisor.restart_server(db)
-        if restart.get("ok"):
-            set_setting(db, "restart_required", False)
-        return {"results": results, "restart": restart}
-    set_setting(db, "restart_required", True)
+    # Manual Update all / per-row Update never restarts — leave that to Restart + sync
+    # (or the maintenance window when restart_after_updates is enabled).
+    if any(r.get("ok") for r in results):
+        set_setting(db, "restart_required", True)
     return {"results": results, "restart": None}
 
 
