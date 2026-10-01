@@ -135,3 +135,18 @@ class PackageCacheMeta(Base):
     last_refreshed_at = Column(DateTime(timezone=True), nullable=True)
     package_count = Column(Integer, default=0)
     enabled = Column(Boolean, default=True)
+
+
+class ModProfile(Base):
+    """Named declarative mod list (Gale/r2modman-compatible)."""
+
+    __tablename__ = "mod_profiles"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(255), unique=True, nullable=False)
+    mods_json = Column(Text, nullable=False, default="[]")
+    include_configs = Column(Boolean, default=True)
+    community = Column(String(64), nullable=True, default="valheim")
+    style = Column(String(32), nullable=True, default="gale")
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)

@@ -1,5 +1,6 @@
 import { NavLink, Outlet } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
+import { ThemePreference, useTheme } from "../hooks/useTheme";
 import { BackgroundJobToaster } from "./BackgroundJobToaster";
 
 const links = [
@@ -8,12 +9,14 @@ const links = [
   { to: "/discover", label: "Discover" },
   { to: "/config", label: "Config" },
   { to: "/history", label: "History" },
+  { to: "/profiles", label: "Profiles" },
   { to: "/backups", label: "Backups" },
   { to: "/settings", label: "Settings" },
 ];
 
 export default function Layout() {
   const { auth, logout } = useAuth();
+  const { preference, setPreference } = useTheme();
 
   return (
     <div className="mx-auto flex min-h-screen max-w-6xl flex-col gap-6 px-4 py-6 md:px-8">
@@ -27,7 +30,20 @@ export default function Layout() {
             Valheim Mod Manager
           </h1>
         </div>
-        <div className="flex items-center gap-3 text-sm text-bark/80">
+        <div className="flex flex-wrap items-center gap-3 text-sm text-bark/80">
+          <label className="flex items-center gap-2">
+            <span className="text-bark/70">Theme</span>
+            <select
+              className="rounded-md border border-bark/20 bg-paper px-2 py-1.5 text-sm text-bark"
+              value={preference}
+              onChange={(e) => setPreference(e.target.value as ThemePreference)}
+              aria-label="Theme"
+            >
+              <option value="system">System</option>
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+            </select>
+          </label>
           <span>{auth?.username}</span>
           <button
             type="button"
@@ -49,7 +65,7 @@ export default function Layout() {
               [
                 "rounded-full px-3 py-1.5 text-sm transition",
                 isActive
-                  ? "bg-moss text-paper"
+                  ? "bg-moss text-on-moss"
                   : "bg-paper/70 text-bark hover:bg-mist",
               ].join(" ")
             }

@@ -71,7 +71,7 @@ export default function BackupsPage() {
           type="button"
           disabled={busy}
           onClick={createBackup}
-          className="rounded-md bg-moss px-3 py-2 text-sm text-paper"
+          className="rounded-md bg-moss px-3 py-2 text-sm text-on-moss"
         >
           {busy ? "Working…" : "Create backup"}
         </button>

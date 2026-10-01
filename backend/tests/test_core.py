@@ -444,6 +444,43 @@ def test_scan_multi_dll_folder_is_single_mod(tmp_path: Path, monkeypatch):
     assert results[0].full_name == "Author-CoolMod"
 
 
+def test_job_startup_runs_scan_then_refresh(monkeypatch):
+    from app.services import updates as updates_mod
+
+    order: list[str] = []
+
+    def fake_scan():
+        order.append("scan")
+
+    async def fake_refresh():
+        order.append("refresh")
+
+    monkeypatch.setattr(updates_mod, "job_scan_plugins", fake_scan)
+    monkeypatch.setattr(updates_mod, "job_refresh_packages", fake_refresh)
+
+    import asyncio
+
+    asyncio.run(updates_mod.job_startup())
+    assert order == ["scan", "refresh"]
+
+
+def test_sqlite_uses_wal_and_busy_timeout(tmp_path, monkeypatch):
+    from app import database as database_mod
+    from app.config import Settings
+
+    settings = Settings(data_dir=tmp_path / "data", bepinex_root=tmp_path / "bepinex")
+    monkeypatch.setattr(database_mod, "get_settings", lambda: settings)
+    database_mod._engine = None
+    database_mod.SessionLocal = None
+    database_mod.init_db()
+    assert database_mod._engine is not None
+    with database_mod._engine.connect() as conn:
+        mode = conn.exec_driver_sql("PRAGMA journal_mode").scalar()
+        busy = conn.exec_driver_sql("PRAGMA busy_timeout").scalar()
+    assert str(mode).lower() == "wal"
+    assert int(busy) >= 30000
+
+
 def test_job_scan_plugins_runs_persist_scan(monkeypatch):
     from app.services import updates as updates_mod
 

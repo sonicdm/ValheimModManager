@@ -466,7 +466,7 @@ export default function InstalledPage() {
               >
                 Cancel
               </button>
-              <button type="submit" className="rounded-md bg-moss px-3 py-2 text-sm text-paper">
+              <button type="submit" className="rounded-md bg-moss px-3 py-2 text-sm text-on-moss">
                 Import
               </button>
             </div>
@@ -559,7 +559,7 @@ export default function InstalledPage() {
               <button type="button" className="px-3 py-2 text-sm" onClick={() => setLinkForm(null)}>
                 Cancel
               </button>
-              <button type="submit" className="rounded-md bg-moss px-3 py-2 text-sm text-paper">
+              <button type="submit" className="rounded-md bg-moss px-3 py-2 text-sm text-on-moss">
                 Save link
               </button>
             </div>

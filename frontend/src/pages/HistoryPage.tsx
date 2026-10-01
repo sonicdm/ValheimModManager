@@ -61,7 +61,7 @@ export default function HistoryPage() {
             </option>
           ))}
         </select>
-        <button type="submit" className="rounded-md bg-moss px-3 py-2 text-paper">
+        <button type="submit" className="rounded-md bg-moss px-3 py-2 text-on-moss">
           Filter
         </button>
       </form>

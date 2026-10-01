@@ -211,3 +211,70 @@ class HealthOut(BaseModel):
     version: str
     bepinex_root: str
     plugins_exist: bool
+
+
+class ProfileModOut(BaseModel):
+    source: str
+    full_name: str
+    version: str
+    enabled: bool = True
+
+
+class ProfileOut(BaseModel):
+    id: int
+    name: str
+    mods: list[ProfileModOut]
+    include_configs: bool
+    community: str | None = None
+    style: str | None = None
+    mod_count: int
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    is_active: bool = False
+
+
+class ProfileCreateRequest(BaseModel):
+    name: str
+    include_configs: bool = True
+    from_current: bool = True
+
+
+class ProfileUpdateRequest(BaseModel):
+    name: str | None = None
+    include_configs: bool | None = None
+    refresh_from_current: bool = False
+
+
+class ProfileActivateRequest(BaseModel):
+    include_configs: bool | None = None
+
+
+class ProfileActivateResult(BaseModel):
+    profile_id: int
+    installed: list[str] = []
+    updated: list[str] = []
+    removed: list[str] = []
+    kept_persistent: list[str] = []
+    disabled: list[str] = []
+    configs_written: int = 0
+    errors: list[str] = []
+    restart_required: bool = True
+
+
+class ProfileImportRequest(BaseModel):
+    code: str | None = None
+    name: str | None = None
+    include_configs: bool = True
+    activate: bool = False
+
+
+class ProfileExportPreview(BaseModel):
+    kept: list[ProfileModOut] = []
+    remapped: list[dict] = []
+    dropped: list[ProfileModOut] = []
+
+
+class ProfileCodeOut(BaseModel):
+    code: str
+    backend: str
+    mode: str

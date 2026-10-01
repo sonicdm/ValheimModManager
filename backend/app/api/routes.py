@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from ..auth.security import (
@@ -45,6 +46,15 @@ from ..schemas import (
     PackageOut,
     PackageVersionOut,
     PendingUpdateOut,
+    ProfileActivateRequest,
+    ProfileActivateResult,
+    ProfileCodeOut,
+    ProfileCreateRequest,
+    ProfileExportPreview,
+    ProfileImportRequest,
+    ProfileModOut,
+    ProfileOut,
+    ProfileUpdateRequest,
     ScanResult,
     SettingUpdate,
     SettingsResponse,
@@ -54,6 +64,7 @@ from ..services import backup as backup_service
 from ..services import config_editor
 from ..services import installer
 from ..services import packages as package_service
+from ..services import profiles as profile_service
 from ..services import scanner
 from ..services import supervisor
 from ..services import updates as update_service
@@ -771,7 +782,7 @@ async def apply_updates(
     db: Annotated[Session, Depends(get_db)],
     body: ApplyUpdatesRequest | None = None,
 ) -> dict[str, Any]:
-    # Manual apply ignores player gate
+    # Manual apply is always allowed (unattended gate is scheduled-only)
     from ..services.settings_service import set_setting
 
     pending = db.query(PendingUpdate).filter(PendingUpdate.status.in_(["queued", "deferred"])).all()
@@ -848,3 +859,268 @@ def server_diagnose(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict[str, Any]:
     return supervisor.diagnose(db)
+
+
+def _profile_out(data: dict[str, Any]) -> ProfileOut:
+    return ProfileOut(
+        id=data["id"],
+        name=data["name"],
+        mods=[ProfileModOut(**m) for m in data.get("mods") or []],
+        include_configs=bool(data.get("include_configs", True)),
+        community=data.get("community"),
+        style=data.get("style"),
+        mod_count=int(data.get("mod_count") or 0),
+        created_at=data.get("created_at"),
+        updated_at=data.get("updated_at"),
+        is_active=bool(data.get("is_active")),
+    )
+
+
+@router.get("/profiles", response_model=list[ProfileOut])
+def list_profiles(
+    user: Annotated[AdminUser, Depends(_auth_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> list[ProfileOut]:
+    return [_profile_out(p) for p in profile_service.list_profiles(db)]
+
+
+@router.post("/profiles", response_model=ProfileOut)
+def create_profile(
+    body: ProfileCreateRequest,
+    user: Annotated[AdminUser, Depends(_auth_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> ProfileOut:
+    try:
+        if body.from_current:
+            row = profile_service.create_from_current(
+                db, name=body.name, include_configs=body.include_configs
+            )
+        else:
+            from ..models import ModProfile
+            from ..services.profiles import _mods_to_json
+
+            row = ModProfile(
+                name=body.name.strip(),
+                mods_json=_mods_to_json([]),
+                include_configs=body.include_configs,
+                community="valheim",
+                style="gale",
+            )
+            db.add(row)
+            db.commit()
+            db.refresh(row)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    active = get_setting(db, "active_profile_id", None)
+    active_id = int(active) if active not in (None, "", False) else None
+    return _profile_out(profile_service.profile_to_dict(row, active_id=active_id))
+
+
+@router.get("/profiles/export-current")
+def export_current_file(
+    user: Annotated[AdminUser, Depends(_auth_user)],
+    db: Annotated[Session, Depends(get_db)],
+    mode: str = Query("full"),
+) -> StreamingResponse:
+    if mode not in ("full", "thunderstore"):
+        raise HTTPException(status_code=400, detail="mode must be full or thunderstore")
+    data, filename = profile_service.build_export_zip(db, profile_id=None, mode=mode)  # type: ignore[arg-type]
+    return StreamingResponse(
+        iter([data]),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.post("/profiles/export-current-code", response_model=ProfileCodeOut)
+async def export_current_code(
+    user: Annotated[AdminUser, Depends(_auth_user)],
+    db: Annotated[Session, Depends(get_db)],
+    mode: str = Query("full"),
+) -> ProfileCodeOut:
+    if mode not in ("full", "thunderstore"):
+        raise HTTPException(status_code=400, detail="mode must be full or thunderstore")
+    try:
+        out = await profile_service.export_share_code(db, profile_id=None, mode=mode)  # type: ignore[arg-type]
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return ProfileCodeOut(**out)
+
+
+@router.post("/profiles/import", response_model=ProfileOut)
+async def import_profile(
+    user: Annotated[AdminUser, Depends(_auth_user)],
+    db: Annotated[Session, Depends(get_db)],
+    code: Annotated[str | None, Form()] = None,
+    name: Annotated[str | None, Form()] = None,
+    include_configs: Annotated[bool, Form()] = True,
+    activate: Annotated[bool, Form()] = False,
+    file: UploadFile | None = File(None),
+) -> ProfileOut:
+    file_bytes = await file.read() if file is not None else None
+    if not code and not file_bytes:
+        raise HTTPException(status_code=400, detail="Provide code or .r2z file")
+    try:
+        row = await profile_service.import_profile(
+            db,
+            code=code,
+            file_bytes=file_bytes or None,
+            name=name,
+            include_configs=include_configs,
+        )
+        if activate:
+            await profile_service.activate_profile(db, row.id, include_configs=include_configs)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    active = get_setting(db, "active_profile_id", None)
+    active_id = int(active) if active not in (None, "", False) else None
+    return _profile_out(profile_service.profile_to_dict(row, active_id=active_id))
+
+
+@router.post("/profiles/import-code", response_model=ProfileOut)
+async def import_profile_code(
+    body: ProfileImportRequest,
+    user: Annotated[AdminUser, Depends(_auth_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> ProfileOut:
+    if not body.code:
+        raise HTTPException(status_code=400, detail="code required")
+    try:
+        row = await profile_service.import_profile(
+            db,
+            code=body.code,
+            name=body.name,
+            include_configs=body.include_configs,
+        )
+        if body.activate:
+            await profile_service.activate_profile(db, row.id, include_configs=body.include_configs)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    active = get_setting(db, "active_profile_id", None)
+    active_id = int(active) if active not in (None, "", False) else None
+    return _profile_out(profile_service.profile_to_dict(row, active_id=active_id))
+
+
+@router.get("/profiles/{profile_id}", response_model=ProfileOut)
+def get_profile(
+    profile_id: int,
+    user: Annotated[AdminUser, Depends(_auth_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> ProfileOut:
+    try:
+        row = profile_service.get_profile(db, profile_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    active = get_setting(db, "active_profile_id", None)
+    active_id = int(active) if active not in (None, "", False) else None
+    return _profile_out(profile_service.profile_to_dict(row, active_id=active_id))
+
+
+@router.patch("/profiles/{profile_id}", response_model=ProfileOut)
+def patch_profile(
+    profile_id: int,
+    body: ProfileUpdateRequest,
+    user: Annotated[AdminUser, Depends(_auth_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> ProfileOut:
+    try:
+        row = profile_service.update_profile(
+            db,
+            profile_id,
+            name=body.name,
+            include_configs=body.include_configs,
+            refresh_from_current=body.refresh_from_current,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    active = get_setting(db, "active_profile_id", None)
+    active_id = int(active) if active not in (None, "", False) else None
+    return _profile_out(profile_service.profile_to_dict(row, active_id=active_id))
+
+
+@router.delete("/profiles/{profile_id}")
+def delete_profile(
+    profile_id: int,
+    user: Annotated[AdminUser, Depends(_auth_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict[str, bool]:
+    try:
+        profile_service.delete_profile(db, profile_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"ok": True}
+
+
+@router.post("/profiles/{profile_id}/activate", response_model=ProfileActivateResult)
+async def activate_profile(
+    profile_id: int,
+    body: ProfileActivateRequest,
+    user: Annotated[AdminUser, Depends(_auth_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> ProfileActivateResult:
+    try:
+        result = await profile_service.activate_profile(
+            db, profile_id, include_configs=body.include_configs
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return ProfileActivateResult(**result)
+
+
+@router.get("/profiles/{profile_id}/export")
+def export_profile_file(
+    profile_id: int,
+    user: Annotated[AdminUser, Depends(_auth_user)],
+    db: Annotated[Session, Depends(get_db)],
+    mode: str = Query("full"),
+) -> StreamingResponse:
+    if mode not in ("full", "thunderstore"):
+        raise HTTPException(status_code=400, detail="mode must be full or thunderstore")
+    try:
+        data, filename = profile_service.build_export_zip(db, profile_id=profile_id, mode=mode)  # type: ignore[arg-type]
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return StreamingResponse(
+        iter([data]),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/profiles/{profile_id}/export-preview", response_model=ProfileExportPreview)
+def export_profile_preview(
+    profile_id: int,
+    user: Annotated[AdminUser, Depends(_auth_user)],
+    db: Annotated[Session, Depends(get_db)],
+    mode: str = Query("thunderstore"),
+) -> ProfileExportPreview:
+    if mode != "thunderstore":
+        raise HTTPException(status_code=400, detail="preview only for thunderstore mode")
+    try:
+        row = profile_service.get_profile(db, profile_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    from ..services.profiles import _mods_from_json
+
+    preview = profile_service.preview_thunderstore_export(_mods_from_json(row.mods_json))
+    return ProfileExportPreview(
+        kept=[ProfileModOut(**m) for m in preview["kept"]],
+        remapped=preview["remapped"],
+        dropped=[ProfileModOut(**m) for m in preview["dropped"]],
+    )
+
+
+@router.post("/profiles/{profile_id}/export-code", response_model=ProfileCodeOut)
+async def export_profile_code(
+    profile_id: int,
+    user: Annotated[AdminUser, Depends(_auth_user)],
+    db: Annotated[Session, Depends(get_db)],
+    mode: str = Query("full"),
+) -> ProfileCodeOut:
+    if mode not in ("full", "thunderstore"):
+        raise HTTPException(status_code=400, detail="mode must be full or thunderstore")
+    try:
+        out = await profile_service.export_share_code(db, profile_id=profile_id, mode=mode)  # type: ignore[arg-type]
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return ProfileCodeOut(**out)

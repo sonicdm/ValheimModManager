@@ -75,7 +75,7 @@ export default function ConfigPage() {
                 type="button"
                 className={[
                   "w-full rounded px-2 py-1.5 text-left",
-                  selected === f.name ? "bg-moss text-paper" : "hover:bg-mist",
+                  selected === f.name ? "bg-moss text-on-moss" : "hover:bg-mist",
                 ].join(" ")}
                 onClick={() => setParams({ file: f.name })}
               >
@@ -110,7 +110,7 @@ export default function ConfigPage() {
                 </button>
                 <button
                   type="button"
-                  className="rounded bg-moss px-3 py-1.5 text-sm text-paper"
+                  className="rounded bg-moss px-3 py-1.5 text-sm text-on-moss"
                   onClick={save}
                 >
                   Save

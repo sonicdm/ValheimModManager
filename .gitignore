@@ -3,10 +3,14 @@ __pycache__/
 .venv/
 venv/
 .env
+.env.dev
 backend/static/
 frontend/node_modules/
 frontend/dist/
 data/
+data-dev/
+data-example/
+example_mods/
 *.db
 .pytest_cache/
 .mypy_cache/

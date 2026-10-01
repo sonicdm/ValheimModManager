@@ -22,9 +22,10 @@ def init_db() -> None:
     settings.staging_dir.mkdir(parents=True, exist_ok=True)
 
     db_url = f"sqlite:///{settings.db_path.as_posix()}"
+    # timeout: seconds sqlite waits on locks before raising "database is locked"
     _engine = create_engine(
         db_url,
-        connect_args={"check_same_thread": False},
+        connect_args={"check_same_thread": False, "timeout": 30},
         future=True,
     )
 
@@ -32,6 +33,10 @@ def init_db() -> None:
     def _set_sqlite_pragma(dbapi_connection, connection_record):  # noqa: ANN001
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA foreign_keys=ON")
+        # WAL lets readers proceed while a writer holds a transaction (startup scan
+        # + package refresh + health checks overlap otherwise).
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA busy_timeout=30000")
         cursor.close()
 
     SessionLocal = sessionmaker(bind=_engine, autoflush=False, autocommit=False, future=True)

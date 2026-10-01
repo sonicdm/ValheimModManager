@@ -4,6 +4,9 @@
    Windows / remote-desktop setups. Use classic :hover for UI feedback. */
 @custom-variant hover (&:hover);
 
+/* Class-based dark mode (preference applied on <html>). */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
   --font-sans: "Segoe UI", "Trebuchet MS", ui-sans-serif, system-ui, sans-serif;
   --font-display: Georgia, "Times New Roman", serif;
@@ -13,9 +16,27 @@
   --color-bark: #3d3429;
   --color-moss: #3f6b4d;
   --color-moss-deep: #2c4d37;
+  --color-on-moss: #f7f3eb;
   --color-ember: #c45c26;
   --color-sea: #2f5d6e;
   --color-danger: #9b2c2c;
+}
+
+html {
+  color-scheme: light;
+}
+
+html.dark {
+  color-scheme: dark;
+  --color-ink: #ebe6dc;
+  --color-paper: #1c1a17;
+  --color-mist: #2a2620;
+  --color-bark: #c9bfb0;
+  --color-moss: #4f7d5c;
+  --color-moss-deep: #9bc4a6;
+  --color-ember: #e07a3d;
+  --color-sea: #6a9fb0;
+  --color-danger: #e07070;
 }
 
 html,
@@ -34,13 +55,23 @@ body {
     linear-gradient(180deg, #f7f3eb 0%, #ebe4d6 100%);
 }
 
+html.dark body {
+  background:
+    radial-gradient(ellipse 120% 80% at 10% -10%, #1a2a20 0%, transparent 55%),
+    radial-gradient(ellipse 90% 60% at 100% 0%, #2a2218 0%, transparent 50%),
+    linear-gradient(180deg, #12110f 0%, #1a1815 100%);
+}
+
 .font-display {
   font-family: var(--font-display);
 }
 
 @layer components {
   .btn-primary {
-    @apply inline-flex items-center justify-center rounded-md bg-moss px-3 py-2 text-sm text-paper transition-colors hover:bg-moss-deep disabled:cursor-not-allowed disabled:opacity-60;
+    @apply inline-flex items-center justify-center rounded-md bg-moss px-3 py-2 text-sm text-on-moss transition-colors disabled:cursor-not-allowed disabled:opacity-60;
+  }
+  .btn-primary:hover {
+    background: color-mix(in oklab, var(--color-moss) 82%, black);
   }
   .btn-secondary {
     @apply inline-flex items-center justify-center rounded-md border border-bark/20 bg-paper px-3 py-2 text-sm text-bark transition-colors hover:border-bark/40 hover:bg-mist disabled:cursor-not-allowed disabled:opacity-60;
@@ -119,12 +150,12 @@ body {
   overflow-x: auto;
   padding: 0.75rem 1rem;
   border-radius: 0.5rem;
-  background: color-mix(in oklab, var(--color-mist) 80%, white);
+  background: color-mix(in oklab, var(--color-mist) 80%, var(--color-paper));
 }
 .package-docs code {
   padding: 0.1em 0.35em;
   border-radius: 0.25rem;
-  background: color-mix(in oklab, var(--color-mist) 70%, white);
+  background: color-mix(in oklab, var(--color-mist) 70%, var(--color-paper));
 }
 .package-docs pre code {
   padding: 0;

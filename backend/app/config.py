@@ -65,7 +65,7 @@ class Settings(BaseSettings):
 
     @property
     def config_dir(self) -> Path:
-        return self.bepinex_root
+        return self.bepinex_root / "config"
 
     @property
     def persistent_dir(self) -> Path:

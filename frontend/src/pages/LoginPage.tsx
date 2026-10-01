@@ -60,7 +60,7 @@ export default function LoginPage() {
         <button
           type="submit"
           disabled={busy}
-          className="mt-6 w-full rounded-md bg-moss px-4 py-2.5 font-medium text-paper hover:bg-moss-deep disabled:opacity-60"
+          className="mt-6 w-full rounded-md bg-moss px-4 py-2.5 font-medium text-on-moss hover:brightness-95 disabled:opacity-60"
         >
           {busy ? "Signing in…" : "Sign in"}
         </button>
