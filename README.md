@@ -85,7 +85,11 @@ Everything already on disk. You can import a zip/DLL, disable without deleting, 
 
 **History** is the audit log (installs, scans, restarts, settings, errors). **Backups** zip managed plugin state before you do something risky.
 
-**Profiles** are named mod lists for this server: save the current install, import a file or Thunderstore/r2modman share code, apply a profile (full replace of managed packs, backup first), or export `.r2z` / a share code. Gale Sync paste needs Discord login — the share code here is the UUID style, not that.
+**Profiles** are named mod lists for this server. Save what’s installed, import a `.r2z` or share code, apply a profile to the server (full replace of managed packs, backup first), or export a `.r2z` / share code.
+
+**Gale ↔ this manager:** fully interoperable. Same `.r2z` files and share codes both ways, including Hexium mods.
+
+**This manager ↔ r2modman / Thunderstore Mod Manager:** only works when every mod (and version) in the profile exists on Thunderstore. Hexium-only packs, or Hexium versions that Thunderstore doesn’t have, will break import there. Use **Download Thunderstore-only** when sharing with those tools — it remaps or drops anything Thunderstore can’t resolve.
 
 ![Profiles](docs/screenshots/profiles.png)
 

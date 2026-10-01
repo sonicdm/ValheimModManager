@@ -118,9 +118,7 @@ export default function ProfilesPage() {
       setLastCode(out.code);
       await navigator.clipboard.writeText(out.code);
       toast.showOk("Share code copied to clipboard.");
-      setMessage(
-        `Share code ready (works in r2modman and similar managers): ${out.code}. For Gale, download a profile file and import it from disk — Gale’s Sync paste is a separate Discord login flow.`,
-      );
+      setMessage(`Share code ready: ${out.code}`);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Could not create share code";
       setError(msg);
@@ -199,10 +197,12 @@ export default function ProfilesPage() {
       <div>
         <h2 className="font-display text-3xl">Profiles</h2>
         <p className="text-sm text-bark/70">
-          Save named mod lists for this server, then apply one when you want it live. To share with
-          players: download a profile file (works in Gale and r2modman), or copy a share code (r2modman
-          and similar). Gale Sync paste codes are a different Discord login flow and are not used
-          here.
+          Save named mod lists for this server, then apply one when you want it live. Import/export
+          uses the same <code className="text-xs">.r2z</code> files and share codes as Gale — fully
+          interoperable both ways, including Hexium. r2modman / Thunderstore Mod Manager only work
+          if every mod and version is on Thunderstore; otherwise use{" "}
+          <strong>Download Thunderstore-only</strong> (remaps or drops what Thunderstore can’t
+          resolve).
         </p>
       </div>
 
@@ -330,7 +330,7 @@ export default function ProfilesPage() {
                   disabled={busy}
                   onClick={() => exportFile(p.id, "full")}
                   className="rounded-md bg-moss px-3 py-1.5 text-sm text-on-moss"
-                  title="Download a profile file you can import in Gale or r2modman"
+                  title="Download .r2z (full profile — works with Gale)"
                 >
                   Download profile file
                 </button>
@@ -339,7 +339,7 @@ export default function ProfilesPage() {
                   disabled={busy}
                   onClick={() => exportCode(p.id)}
                   className="btn-secondary px-3 py-1.5 text-sm"
-                  title="Copy a share code for r2modman and similar managers (not Gale Sync)"
+                  title="Share code (works with Gale; r2modman only if everything is on Thunderstore)"
                 >
                   Copy share code
                 </button>
@@ -348,7 +348,7 @@ export default function ProfilesPage() {
                   disabled={busy}
                   onClick={() => exportFile(p.id, "thunderstore")}
                   className="btn-secondary px-3 py-1.5 text-sm"
-                  title="Same as Download profile file, but only Thunderstore mods (drops Hexium-only pins)"
+                  title="For r2modman / Thunderstore Mod Manager — remaps or drops Hexium-only mods/versions"
                 >
                   Download Thunderstore-only
                 </button>
