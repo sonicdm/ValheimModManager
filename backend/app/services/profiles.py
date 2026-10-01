@@ -371,8 +371,8 @@ async def export_share_code(
     if mode == "thunderstore":
         backend = "thunderstore"
     else:
-        # Prefer Thunderstore so the code is a real UUID (r2modman / Gale legacy-code import).
-        # Hexium create returns opaque 32-char hex that Gale Sync paste rejects.
+        # Prefer Thunderstore hosting so the paste code is a normal UUID.
+        # Hexium's create endpoint often returns opaque 32-char hex instead.
         # Zip content can still list Hexium-sourced mods; only the paste host changes.
         backend = "thunderstore"
         mods = (

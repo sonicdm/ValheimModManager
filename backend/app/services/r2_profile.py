@@ -297,8 +297,7 @@ async def upload_share_code(zip_bytes: bytes, *, backend: str) -> str:
         if not key:
             raise ValueError(f"Share-code upload returned no key: {data}")
         key_s = str(key)
-        # Thunderstore returns UUIDs Gale/r2 can paste into "code" import.
-        # Hexium often returns 32-char hex — Gale Sync paste field rejects those.
+        # Thunderstore returns UUIDs; Hexium often returns bare 32-char hex — normalize to UUID form.
         if backend == "hexium" and not UUID_RE.match(key_s):
             if len(key_s) == 32 and all(c in "0123456789abcdefABCDEF" for c in key_s):
                 key_s = (
