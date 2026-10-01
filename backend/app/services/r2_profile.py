@@ -17,7 +17,7 @@ import yaml
 logger = logging.getLogger(__name__)
 
 PROFILE_DATA_PREFIX = "#r2modman\n"
-USER_AGENT = "ValheimModManager/0.2.0 (compatible; Gale/r2modman profile interop)"
+USER_AGENT = "ValheimModManager/0.3.0 (compatible; Gale/r2modman profile interop)"
 
 THUNDERSTORE_GET = "https://thunderstore.io/api/experimental/legacyprofile/get/{code}/"
 THUNDERSTORE_CREATE = "https://thunderstore.io/api/experimental/legacyprofile/create/"

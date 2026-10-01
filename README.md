@@ -5,7 +5,7 @@ A small web UI that sits next to a [community-valheim-tools/valheim-server](http
 | | Image |
 |---|---|
 | Valheim | `ghcr.io/community-valheim-tools/valheim-server` |
-| This manager | `ghcr.io/sonicdm/valheim-mod-manager:latest` (or pin e.g. `:0.2.0`) |
+| This manager | `ghcr.io/sonicdm/valheim-mod-manager:latest` (or pin e.g. `:0.3.0`) |
 
 Day to day: **Discover → Install → Restart + sync**. Theme (System / Light / Dark) lives in the header; default is System.
 
