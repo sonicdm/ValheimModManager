@@ -442,7 +442,7 @@ export default function PackageDetailPage() {
                 onClick={() => setDocTab(kind)}
                 className={[
                   "rounded-full px-3 py-1.5 text-sm transition",
-                  docTab === kind ? "bg-moss text-paper" : "bg-mist/70 text-bark hover:bg-mist",
+                  docTab === kind ? "bg-moss text-on-moss" : "bg-mist/70 text-bark hover:bg-mist",
                   missing ? "opacity-60" : "",
                 ].join(" ")}
               >

@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
 import { api } from "../api/client";
+import { ThemePreference, useTheme } from "../hooks/useTheme";
 
 const COMMON_TIMEZONES = [
   "America/Los_Angeles",
@@ -22,6 +23,7 @@ export default function SettingsPage() {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [pw, setPw] = useState({ current: "", next: "" });
+  const { preference, resolved, setPreference } = useTheme();
 
   useEffect(() => {
     api
@@ -70,6 +72,36 @@ export default function SettingsPage() {
       </div>
       {error && <p className="text-sm text-danger">{error}</p>}
       {message && <p className="text-sm text-moss-deep">{message}</p>}
+
+      <section className="space-y-3 rounded-2xl border border-bark/10 bg-paper/80 p-5">
+        <h3 className="font-display text-xl">Appearance</h3>
+        <p className="text-sm text-bark/70">
+          Stored in this browser only. Default follows your system setting
+          {preference === "system" ? ` (currently ${resolved})` : ""}.
+        </p>
+        <div className="flex flex-wrap gap-2" role="group" aria-label="Theme">
+          {(
+            [
+              ["system", "System"],
+              ["light", "Light"],
+              ["dark", "Dark"],
+            ] as const
+          ).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => setPreference(value as ThemePreference)}
+              className={
+                preference === value
+                  ? "rounded-md bg-moss px-3 py-2 text-sm text-on-moss"
+                  : "btn-secondary px-3 py-2 text-sm"
+              }
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </section>
 
       <form onSubmit={save} className="space-y-6 rounded-2xl border border-bark/10 bg-paper/80 p-5">
         <fieldset className="grid gap-3 md:grid-cols-2">
@@ -251,7 +283,7 @@ export default function SettingsPage() {
           </label>
         </fieldset>
 
-        <button type="submit" className="rounded-md bg-moss px-4 py-2 text-paper">
+        <button type="submit" className="rounded-md bg-moss px-4 py-2 text-on-moss">
           Save settings
         </button>
       </form>

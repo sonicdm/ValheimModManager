@@ -190,3 +190,41 @@ export type Backup = {
   notes?: string | null;
   success: boolean;
 };
+
+export type ProfileMod = {
+  source: string;
+  full_name: string;
+  version: string;
+  enabled: boolean;
+};
+
+export type Profile = {
+  id: number;
+  name: string;
+  mods: ProfileMod[];
+  include_configs: boolean;
+  community?: string | null;
+  style?: string | null;
+  mod_count: number;
+  created_at?: string | null;
+  updated_at?: string | null;
+  is_active: boolean;
+};
+
+export type ProfileActivateResult = {
+  profile_id: number;
+  installed: string[];
+  updated: string[];
+  removed: string[];
+  kept_persistent: string[];
+  disabled: string[];
+  configs_written: number;
+  errors: string[];
+  restart_required: boolean;
+};
+
+export type ProfileCodeOut = {
+  code: string;
+  backend: string;
+  mode: string;
+};

@@ -2,16 +2,14 @@
 
 Self-hosted companion for an existing [community-valheim-tools/valheim-server](https://github.com/community-valheim-tools/valheim-server-docker) deployment. Discover, install, configure, update, and roll back BepInEx mods from **Thunderstore** and **Hexium** without replacing the game container or touching world saves.
 
-**Images (preferred — no local build):**
-
 | Role | Image |
 |---|---|
 | Valheim server | `ghcr.io/community-valheim-tools/valheim-server` |
 | Mod manager | `ghcr.io/sonicdm/valheim-mod-manager:latest` (or pin `:0.2.0`) |
 
-The Valheim image is the relocated home of the former [lloesche/valheim-server-docker](https://github.com/lloesche/valheim-server-docker) project (same layout and Supervisor ABI). Legacy `ghcr.io/lloesche/valheim-server` tags remain compatible until they disappear.
-
 ## Screenshots
+
+![Sign in](docs/screenshots/login.png)
 
 ![Dashboard](docs/screenshots/dashboard.png)
 
@@ -19,33 +17,93 @@ The Valheim image is the relocated home of the former [lloesche/valheim-server-d
 | --- | --- |
 | ![Discover](docs/screenshots/discover.png) | ![Installed](docs/screenshots/installed.png) |
 
-| Package install | Config editor |
+| Package | Config |
 | --- | --- |
 | ![Package](docs/screenshots/package.png) | ![Config](docs/screenshots/config.png) |
 
-| Settings | Sign in |
-| --- | --- |
-| ![Settings](docs/screenshots/settings.png) | ![Sign in](docs/screenshots/login.png) |
+![Settings](docs/screenshots/settings.png)
 
-## How it fits the Valheim image
+## Usage
 
-With `BEPINEX=true`, the server image keeps a persistent tree under `/config/bepinex` and syncs plugins/patchers into `/opt/valheim/bepinex/BepInEx/` during `valheim-bootstrap` (container start and BepInEx install/update). The manager:
+After **Sign in** you get eight pages: **Dashboard**, **Installed**, **Discover**, **Config**, **History**, **Profiles**, **Backups**, and **Settings**. The header has a **Theme** control (System / Light / Dark; defaults to System). Day-to-day work is mostly **Discover → install → Restart + sync**.
 
-1. Writes installs to the **config** mount (`.../config/bepinex`)
-2. Applies changes by stopping `valheim-server`, running `valheim-bootstrap`, then starting `valheim-server` again — it does **not** bind-mount or write `data/bepinex`
-3. Leaves the Valheim image and world saves alone
+### Dashboard
 
-**Persistent packages** (Make persistent) need a Valheim-side hook — see [Persistent packages](#persistent-packages). The manager only talks to Supervisor; it cannot recreate live plugin symlinks itself.
+Server status, counts (**Installed** / **Updates** / **Disabled** / **Unmanaged**), pending updates, the maintenance window, and recent activity.
 
-Do **not** copy a full git working tree as-is (`.venv`, `node_modules`, and `data/` are machine-local). For production you only need Compose files + `.env` and pulled images.
+| Button | What it does |
+|---|---|
+| **Scan plugins** | Walks `config/bepinex` and refreshes the managed list (also runs once on manager startup) |
+| **Check updates** | Refreshes store indexes when they are empty or a few minutes old, then compares installed mods |
+| **Update all** | Applies pending updates for managed packages (enabled when updates exist) |
+| **Restart + sync** | Stops `valheim-server`, runs `valheim-bootstrap` (config → live BepInEx tree), then starts the server again |
 
-## Quick start (pull images)
+Use **Restart + sync** after installs, uninstalls, config saves that need a reload, or **Make persistent**. A banner appears when plugin or config changes are waiting.
 
-Use published GHCR images. You do **not** need `--build`.
+### Discover and install
 
-### Combined (Valheim + manager)
+1. Open **Discover**. Search by name/author; filter with include/exclude categories, source (Thunderstore / Hexium / all), and sort. Defaults favor server-side tags so client-only chrome stays out of the way. **Refresh indexes** pulls fresh Thunderstore/Hexium catalogs; **Reset to server-side** restores the default category set.
+2. Open a package. You get store **Details** / **Changelog** (full markdown), categories, stats, and an **Install** card: pick a version, optionally **Preview**, then **Install** (or **Reinstall / Update** when that package is already installed).
+3. Install downloads the zip, extracts into staging, copies into `config/bepinex/plugins` (and patchers when present), and records the package in the manager DB.
+4. When the install finishes, use **Restart + sync** on the dashboard so the game process loads the new files.
 
-Best path for a new host. Grab the example compose and env template, create `config/` / `data/`, then pull and start:
+Large packs can take a while; the package page shows progress while the request runs.
+
+### Installed
+
+**Installed mods** lists everything already on disk. Toolbar: **Import zip / DLL**, **Refresh indexes + scan**, **Rescan**, **Update all**.
+
+| Action | What it does |
+|---|---|
+| **Disable / Enable** | Moves the plugin folder aside or back without deleting it |
+| **Pin / Unpin** | Blocks automatic updates for that package |
+| **Configure** | Jumps to that mod’s `.cfg` in **Config** (when one is known) |
+| **Link store / Change store** | Attach a local/unmanaged DLL to a Thunderstore or Hexium package for updates |
+| **Make persistent** | For bulky mods (lots of small files). Moves files to `config/bepinex/.persistent/<package>` and leaves a symlink in `plugins/` — see [Persistent packages](#persistent-packages) |
+| **Make normal** | Undoes persistent layout (files back under `plugins/`) |
+| **Uninstall** | Removes managed files and the DB row |
+
+A **persistent** badge appears on rows that use the symlink layout.
+
+### Config
+
+Lists `.cfg` files under `config/bepinex/config`. Open one to edit with **Structured** fields when parseable, or **Raw** text. **Save**, then **Restart + sync** if the mod only reads config at startup.
+
+### History and Backups
+
+- **History** — Audit log of installs, uninstalls, package index refreshes, startup/manual plugin scans, restarts, settings changes, and errors.
+- **Backups** — Create or restore zip backups of managed plugin state before risky upgrades.
+
+### Profiles
+
+Named mod lists for this dedicated server. **Save as new profile** from the current install, or **Import from file** / **Import from share code**. For each saved profile:
+
+| Action | What it does |
+|---|---|
+| **Apply to server** | Full replace of managed Thunderstore/Hexium packs (persistent packs are kept). Creates a backup first |
+| **Download profile file** | `.r2z` you can import in Gale or r2modman |
+| **Copy share code** | Thunderstore/r2modman-style UUID (not Gale Sync paste, which needs Discord login) |
+| **Download Thunderstore-only** | Same file export, but Hexium-only pins are remapped or dropped |
+
+### Settings
+
+- **Appearance** — System (default), Light, or Dark. Same preference as the header **Theme** control; stored in this browser only.
+- **Server** — display name, time zone (IANA, e.g. `America/Los_Angeles` — Compose `TIMEZONE` overrides on container start).
+- **Supervisor** — URL, credentials, program name for restart + sync.
+- **Package sources** — Thunderstore and/or Hexium.
+- **Updates** — policy, check interval, maintenance window, backup-before-update, restart-after-maintenance, and **Force restart when player status is unknown** (off by default).
+- Change the admin password.
+
+### Typical flow (new mod)
+
+1. **Discover** → open a package → **Install** (or **Reinstall / Update**).
+2. If it is huge (web map tiles, asset packs, etc.), **Installed** → **Make persistent** (ensure `POST_BEPINEX_CONFIG_HOOK` is set — [Persistent packages](#persistent-packages)).
+3. Dashboard → **Restart + sync**.
+4. Edit `.cfg` under **Config** if needed, then restart again.
+
+## Quick start
+
+Not a one-liner forever — you still need passwords, ports, and a Valheim + BepInEx layout — but for a **new host** the combined stack is:
 
 ```bash
 mkdir -p valheim-stack/config valheim-stack/data && cd valheim-stack
@@ -54,12 +112,18 @@ curl -fsSL -o docker-compose.yml \
 curl -fsSL -o .env.example \
   https://raw.githubusercontent.com/sonicdm/ValheimModManager/main/.env.example
 cp .env.example .env
-# set MOD_MANAGER_SECRET_KEY, MOD_MANAGER_ADMIN_PASSWORD, SERVER_PASS, …
+# Edit .env — at least:
+#   MOD_MANAGER_SECRET_KEY          (long random string)
+#   MOD_MANAGER_ADMIN_PASSWORD      (UI login for admin)
+#   SERVER_PASS                     (Valheim join password)
+# Optional: SUPERVISOR_HTTP_PASS, MOD_MANAGER_PORT, TIMEZONE, SERVER_NAME, …
 docker compose pull
 docker compose up -d
 ```
 
-Open http://localhost:8090 and sign in as `admin` with `MOD_MANAGER_ADMIN_PASSWORD`. After the first boot with `BEPINEX=true`, BepInEx creates `config/bepinex` (the manager mounts that path).
+Then open http://localhost:8090 and sign in as `admin` with `MOD_MANAGER_ADMIN_PASSWORD`.
+
+First boot with `BEPINEX=true` creates `config/bepinex`; the manager mounts that path. You do **not** need `--build` (images are on GHCR). Do **not** bind-mount `data/bepinex` into the manager — that pins the tree the Valheim image renames during BepInEx merge.
 
 | Variable | Typical value |
 |---|---|
@@ -70,22 +134,9 @@ Open http://localhost:8090 and sign in as `admin` with `MOD_MANAGER_ADMIN_PASSWO
 | `MOD_MANAGER_PORT` | Host port for the UI (default `8090`) |
 | `TIMEZONE` | IANA zone for maintenance cron (default `America/Los_Angeles`) |
 
-Do **not** bind-mount `data/bepinex` or its `plugins`/`patchers` into the manager. Those binds pin the directory the Valheim image renames during BepInEx merge.
+**Already running Valheim elsewhere?** Use this repo’s standalone `docker-compose.yml` + `.env.example`, point `VALHEIM_BEPINEX_PATH` / `VALHEIM_DOCKER_NETWORK` / `SUPERVISOR_URL` at that server, enable `SUPERVISOR_HTTP=true` on Valheim, then `docker compose pull && docker compose up -d`. See `docker-compose.merge.example.yml` for a sibling-service sketch.
 
-### Standalone manager (existing Valheim container)
-
-If Valheim already runs elsewhere, clone or copy this repo’s `docker-compose.yml` + `.env.example`, point `VALHEIM_BEPINEX_PATH` / `VALHEIM_DOCKER_NETWORK` / `SUPERVISOR_URL` at that server, enable `SUPERVISOR_HTTP=true` on Valheim, then:
-
-```bash
-docker compose pull
-docker compose up -d
-```
-
-See `docker-compose.merge.example.yml` for a sibling-service sketch.
-
-### Updating
-
-Merges to `main` and tags `v*` publish new images. On the host:
+**Updating** (after merges to `main` / `v*` tags):
 
 ```bash
 docker compose pull
@@ -94,44 +145,19 @@ docker compose up -d
 
 Pin with `image: ghcr.io/sonicdm/valheim-mod-manager:0.2.0` instead of `:latest` if you want a fixed release.
 
-## Usage
+## How it fits the Valheim image
 
-After login you get seven pages. Day-to-day work is mostly **Discover → Installed → Restart + sync**.
+With `BEPINEX=true`, the server image keeps a persistent tree under `/config/bepinex` and syncs plugins/patchers into `/opt/valheim/bepinex/BepInEx/` during `valheim-bootstrap` (container start and BepInEx install/update). The manager:
 
-### Dashboard
+1. Writes installs to the **config** mount (`.../config/bepinex`)
+2. Applies changes by stopping `valheim-server`, running `valheim-bootstrap`, then starting `valheim-server` again — it does **not** bind-mount or write `data/bepinex`
+3. Leaves the Valheim image and world saves alone
 
-- **Scan plugins** — Walks `config/bepinex` and updates the managed list. Prunes packages that disappeared from disk. Also runs once automatically when the manager process starts; use the button after you change files outside the UI.
-- **Check updates** — Re-fetches Thunderstore/Hexium indexes when they are empty or older than a few minutes (default 5, setting `update_check_index_max_age_minutes`; `0` = always), then compares installed managed mods and shows pending updates.
-- **Restart + sync** — Stops `valheim-server`, runs `valheim-bootstrap` (copies plugins/patchers into the live BepInEx tree), then starts the server again. Use this after installs, uninstalls, config changes that need a reload, or **Make persistent**.
+The Valheim image is the relocated home of the former [lloesche/valheim-server-docker](https://github.com/lloesche/valheim-server-docker) project (same layout and Supervisor ABI). Legacy `ghcr.io/lloesche/valheim-server` tags remain compatible until they disappear.
 
-Also shows server status, counts, pending updates, maintenance schedule (local wall-clock), and recent activity.
+**Persistent packages** (Make persistent) need a Valheim-side hook — see below. The manager only talks to Supervisor; it cannot recreate live plugin symlinks itself.
 
-### Discover and install
-
-1. Open **Discover**. Search by name/author; use **Include categories** / **Exclude categories** (Thunderstore-style), source, and sort. Defaults to server-side tags (`Server-side`, Hexium `Server-only` / `Client & Server`) so client-only chrome stays out of the way.
-2. Open a package. The page loads the store **README** / **Changelog** (full markdown, not just the short blurb), categories, and stats. Pick a version, optionally **Preview**, then **Install**.
-3. Install downloads the zip, extracts into staging, copies into `config/bepinex/plugins` (and patchers when present), and records the package in the manager DB.
-4. When the install finishes, use **Restart + sync** on the dashboard so the game process actually loads the new files.
-
-Large packs can take a while; the install page shows progress while the request runs.
-
-### Installed
-
-Manage everything already on disk:
-
-| Action | What it does |
-|---|---|
-| **Disable / Enable** | Moves the plugin folder aside or back without deleting it |
-| **Pin / Unpin** | Blocks automatic updates for that package |
-| **Configure** | Jumps to that mod’s `.cfg` in **Config** (when one is known) |
-| **Link store / Change store** | Attach a local/unmanaged DLL to a Thunderstore or Hexium package for updates |
-| **Make persistent** | For bulky mods (lots of small files). Moves files to `config/bepinex/.persistent/<package>` and leaves a symlink in `plugins/` pointing at `/config/bepinex/.persistent/<package>`. Requires `POST_BEPINEX_CONFIG_HOOK` on the Valheim service — see [Persistent packages](#persistent-packages). |
-| **Make normal** | Undoes persistent layout (files back under `plugins/`) |
-| **Uninstall** | Removes managed files and the DB row |
-| **Import zip / DLL** | Drop a local package when it isn’t on a store |
-| **Rescan** / **Refresh indexes + scan** | Re-read disk and/or refresh package indexes |
-
-A **persistent** badge appears on rows that use the symlink layout.
+Do **not** copy a full git working tree as-is (`.venv`, `node_modules`, and `data/` are machine-local). For production you only need Compose files + `.env` and pulled images.
 
 ### Persistent packages
 
@@ -152,30 +178,6 @@ Bootstrap still syncs `plugins/` into `/opt/valheim/bepinex/BepInEx/plugins/`. O
 ```
 
 This is included in `docker-compose.combined.example.yml`. If Valheim already runs in another compose file, add the same env var there (see `docker-compose.merge.example.yml`). Do **not** bind-mount onto `data/bepinex/.../plugins/...` — BepInEx merge renames that tree.
-
-### Config
-
-Lists BepInEx and mod `.cfg` files under the config tree. Open one to edit (structured fields when parseable, raw text otherwise). Save, then **Restart + sync** if the mod only reads config at startup.
-
-### History and Backups
-
-- **History** — Audit log of installs, uninstalls, package index refreshes, startup/manual plugin scans, restarts, settings changes, and errors.
-- **Backups** — Create or restore zip backups of managed plugin state before risky upgrades.
-
-### Settings
-
-- Set **time zone** (IANA name, e.g. `America/Los_Angeles`) so the maintenance cron runs at local wall-clock time — not UTC. Compose `TIMEZONE` overrides this on every container start.
-- Enable **automatic maintenance** (update check + optional apply in a time window).
-- Choose whether maintenance restarts the server after updates.
-- **Force restart when player status is unknown** — off by default (fail-safe); turn on only if you accept restarts when the manager cannot prove the server is empty.
-- Change the admin password.
-
-### Typical flow (new mod)
-
-1. **Discover** → install the package.
-2. If it is huge (web map tiles, asset packs, etc.), **Installed** → **Make persistent** (ensure `POST_BEPINEX_CONFIG_HOOK` is set — [Persistent packages](#persistent-packages)).
-3. Dashboard → **Restart + sync**.
-4. Edit `.cfg` under **Config** if needed, then restart again.
 
 ## Combined Compose reference
 
@@ -242,7 +244,7 @@ Open http://localhost:8090 after BepInEx has created `config/bepinex` (first boo
 
 On launch the manager runs a **one-shot plugin scan** (and refreshes package indexes) in the background. Persistent manager state lives in the `mod_manager_data` volume.
 
-If Valheim already runs in another compose project, use the standalone `docker-compose.yml` plus an external network — see [Quick start](#standalone-manager-existing-valheim-container).
+If Valheim already runs in another compose project, use the standalone `docker-compose.yml` plus an external network — see [Quick start](#quick-start).
 
 ## Development
 
@@ -255,8 +257,12 @@ python -m venv .venv
 # Windows: .\.venv\Scripts\activate
 # Linux/macOS: source .venv/bin/activate
 pip install -r requirements.txt
-export DATA_DIR=../data
-export BEPINEX_ROOT=/path/to/valheim-server/config/bepinex
+# Local sandbox (do not point at a live server tree while developing):
+#   example_mods/bepinex  — untracked fake BepInEx root
+#   data-dev/             — untracked SQLite + caches
+# Copy .env.dev or export:
+export DATA_DIR=../data-dev
+export BEPINEX_ROOT=../example_mods/bepinex
 export ADMIN_PASSWORD=changeme
 uvicorn app.main:app --reload --port 8090
 

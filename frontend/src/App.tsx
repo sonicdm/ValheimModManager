@@ -9,6 +9,7 @@ import PackageDetailPage from "./pages/PackageDetailPage";
 import ConfigPage from "./pages/ConfigPage";
 import HistoryPage from "./pages/HistoryPage";
 import BackupsPage from "./pages/BackupsPage";
+import ProfilesPage from "./pages/ProfilesPage";
 import SettingsPage from "./pages/SettingsPage";
 
 function Protected({ children }: { children: React.ReactNode }) {
@@ -43,6 +44,7 @@ export default function App() {
           <Route path="discover/:source/:fullName" element={<PackageDetailPage />} />
           <Route path="config" element={<ConfigPage />} />
           <Route path="history" element={<HistoryPage />} />
+          <Route path="profiles" element={<ProfilesPage />} />
           <Route path="backups" element={<BackupsPage />} />
           <Route path="settings" element={<SettingsPage />} />
         </Route>

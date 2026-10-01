@@ -767,7 +767,7 @@ def import_dll_file(
     return pkg
 
 
-def uninstall_package(db: Session, package_id: int) -> None:
+def uninstall_package(db: Session, package_id: int, *, force: bool = False) -> None:
     settings = get_settings()
     pkg = db.get(InstalledPackage, package_id)
     if pkg is None:
@@ -779,7 +779,7 @@ def uninstall_package(db: Session, package_id: int) -> None:
         for dep in deps:
             if pkg.full_name in dep or dep.startswith(pkg.full_name + "-"):
                 dependents.append(other.full_name)
-    if dependents:
+    if dependents and not force:
         raise ValueError(
             f"Cannot uninstall {pkg.full_name}; required by: {', '.join(dependents)}"
         )
