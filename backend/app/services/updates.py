@@ -71,6 +71,12 @@ async def job_refresh_packages() -> None:
         db.close()
 
 
+async def job_startup() -> None:
+    """Boot scan then package refresh — sequential so they do not fight over SQLite."""
+    job_scan_plugins()
+    await job_refresh_packages()
+
+
 def job_status_snapshot() -> dict[str, bool]:
     from .job_status import snapshot
 
