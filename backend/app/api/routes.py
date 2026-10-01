@@ -782,7 +782,7 @@ async def apply_updates(
     db: Annotated[Session, Depends(get_db)],
     body: ApplyUpdatesRequest | None = None,
 ) -> dict[str, Any]:
-    # Manual apply ignores player gate
+    # Manual apply is always allowed (unattended gate is scheduled-only)
     from ..services.settings_service import set_setting
 
     pending = db.query(PendingUpdate).filter(PendingUpdate.status.in_(["queued", "deferred"])).all()

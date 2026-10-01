@@ -307,7 +307,7 @@ export default function ProfilesPage() {
                   {p.name}
                   {p.is_active ? (
                     <span className="ml-2 text-xs font-normal uppercase tracking-wide text-moss-deep">
-                      on server
+                      Active
                     </span>
                   ) : null}
                 </p>

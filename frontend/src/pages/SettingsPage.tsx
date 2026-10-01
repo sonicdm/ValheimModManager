@@ -279,7 +279,7 @@ export default function SettingsPage() {
               checked={Boolean(values.force_restart_when_players_unknown)}
               onChange={(e) => setField("force_restart_when_players_unknown", e.target.checked)}
             />
-            Force restart when player status is unknown (off by default — fail safe)
+            Allow unattended scheduled maintenance (may install/restart while people are playing)
           </label>
         </fieldset>
 

@@ -228,17 +228,16 @@ async def run_maintenance(db: Session) -> None:
     if not pending:
         return
 
-    # Player-aware gate: without reliable status, fail safe
+    # No player probe exists for private servers — require explicit opt-in for unattended work.
     force = bool(get_setting(db, "force_restart_when_players_unknown", False))
     if not force:
-        # Defer disruptive updates — we cannot prove server is empty
         for p in pending:
             p.status = "deferred"
         log_activity(
             db,
             "maintenance",
             result="deferred",
-            message="Deferred updates: player status unknown; enable force_restart_when_players_unknown to proceed",
+            message="Deferred updates: unattended scheduled maintenance is off",
         )
         db.commit()
         return
