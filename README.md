@@ -121,16 +121,21 @@ Keep the UI on your LAN or behind a login you trust. Don’t hang it on the open
 
 ### Persistent packages
 
-For huge trees (web map tiles, asset packs), **Make persistent** moves files to `config/bepinex/.persistent/<package>/` and leaves a symlink in `plugins/`. Bootstrap still syncs from `plugins/`.
+For huge trees (web map tiles, asset packs), **Make persistent** moves files to `config/bepinex/.persistent/<package>/` and leaves a link in `plugins/`. Bootstrap still syncs from `plugins/`.
 
-On Windows/SMB hosts that symlink on the share is often junk inside Linux, so the live tree drops the pack after sync. The manager can’t fix that from Supervisor alone. Put this on the Valheim service (already in `docker-compose.combined.example.yml`):
+On Windows/SMB hosts, the config-side link can be a reparse-point alias Linux `rsync` cannot read (`Invalid argument`). The Valheim image also replaces the live BepInEx directory during an update. For this case, configure both hooks on the **Valheim service**:
 
 ```yaml
-# Compose: $$ becomes $ inside the container
-- POST_BEPINEX_CONFIG_HOOK=for d in /config/bepinex/.persistent/*/; do [ -d "$$d" ] || continue; name=$$(basename "$$d"); ln -sfn "/config/bepinex/.persistent/$$name" "/opt/valheim/bepinex/BepInEx/plugins/$$name"; done
+# Compose converts $$ to $ inside the container.
+# Before update: stash matching aliases so rsync won't read Windows/SMB link entries.
+- PRE_BEPINEX_CONFIG_HOOK=mkdir -p /config/bepinex/.update-link-stash; restore_update_links() { for link in /config/bepinex/.update-link-stash/*; do [ -L "$$link" ] || continue; name=$$(basename "$$link"); [ -e "/config/bepinex/plugins/$$name" ] || mv "$$link" "/config/bepinex/plugins/$$name"; done; rmdir /config/bepinex/.update-link-stash 2>/dev/null || true; }; trap restore_update_links EXIT; for link in /config/bepinex/plugins/*; do [ -L "$$link" ] || continue; name=$$(basename "$$link"); [ -d "/config/bepinex/.persistent/$$name" ] || continue; mv "$$link" "/config/bepinex/.update-link-stash/$$name"; done
+# After install: restore config aliases and create Linux links under the newly installed tree.
+- POST_BEPINEX_CONFIG_HOOK=for link in /config/bepinex/.update-link-stash/*; do [ -L "$$link" ] || continue; name=$$(basename "$$link"); [ -e "/config/bepinex/plugins/$$name" ] || mv "$$link" "/config/bepinex/plugins/$$name"; done; rmdir /config/bepinex/.update-link-stash 2>/dev/null || true; plugins_root="$$bepinex_path/plugins"; for d in /config/bepinex/.persistent/*/; do [ -d "$$d" ] || continue; name=$$(basename "$$d"); ln -sfn "/config/bepinex/.persistent/$$name" "$$plugins_root/$$name"; done; trap - EXIT
 ```
 
-Don’t bind-mount onto `data/bepinex/.../plugins/...` either — BepInEx merge renames that tree.
+The pre-hook's `EXIT` trap restores stashed aliases if installation exits before the post-hook runs. The post-hook restores those config-side entries, then links packages into the actual newly installed plugin directory using the image's `bepinex_path`. Package contents stay in `.persistent`; no package data is copied. Keep that directory on the persistent config mount, and do not bind-mount individual paths under the live `data/bepinex/.../plugins` tree because the updater swaps the tree.
+
+This workaround is for Windows/SMB link representations; ordinary Linux links may not need it. The complete Compose example includes both hooks.
 
 ## Combined Compose
 
@@ -150,7 +155,7 @@ services:
       - BEPINEX=true
       - SUPERVISOR_HTTP=true
       - SUPERVISOR_HTTP_PORT=9001
-      - POST_BEPINEX_CONFIG_HOOK=for d in /config/bepinex/.persistent/*/; do [ -d "$$d" ] || continue; name=$$(basename "$$d"); ln -sfn "/config/bepinex/.persistent/$$name" "/opt/valheim/bepinex/BepInEx/plugins/$$name"; done
+      # If using .persistent on Windows/SMB, configure both hooks from the section above.
       # plus SERVER_NAME, WORLD_NAME, SERVER_PASS, TZ, SUPERVISOR_HTTP_* …
     restart: unless-stopped
     stop_grace_period: 2m
@@ -184,7 +189,16 @@ Wait until first Valheim boot has created `config/bepinex` before expecting the 
 
 ## Development
 
-For a live server, prefer pulled images. To hack on the manager, uncomment `build: .` in compose and `docker compose up -d --build`, or run locally:
+For local Docker builds, use the isolated dev override. It builds `valheim-mod-manager:dev` without replacing the production container. To run it, the host must already have the Valheim Docker network named in `VALHEIM_DOCKER_NETWORK`:
+
+```powershell
+Set-Location 'N:\Games\Valheim Server\ValheimModManager-Dev'
+docker compose -f docker-compose.yml -f docker-compose.dev.yml build mod-manager
+# Optional: start the dev instance on port 8091 after reviewing its config.
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d mod-manager
+```
+
+For a non-Docker development loop, run the backend and frontend separately:
 
 ```bash
 # Backend
@@ -200,7 +214,7 @@ uvicorn app.main:app --reload --port 8090
 
 # Frontend (other terminal)
 cd frontend
-npm install
+npm ci
 npm run dev
 ```
 

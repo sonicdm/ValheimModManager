@@ -35,7 +35,8 @@ services:
       # Required when config-side symlinks are not valid Linux links (common on Windows/SMB hosts).
       # Compose turns $$ into $ inside the container. The manager cannot do this on Restart+sync
       # (Supervisor only — no shell in the Valheim container).
-      - POST_BEPINEX_CONFIG_HOOK=for d in /config/bepinex/.persistent/*/; do [ -d "$$d" ] || continue; name=$$(basename "$$d"); ln -sfn "/config/bepinex/.persistent/$$name" "/opt/valheim/bepinex/BepInEx/plugins/$$name"; done
+      - PRE_BEPINEX_CONFIG_HOOK=mkdir -p /config/bepinex/.update-link-stash; restore_update_links() { for link in /config/bepinex/.update-link-stash/*; do [ -L "$$link" ] || continue; name=$$(basename "$$link"); [ -e "/config/bepinex/plugins/$$name" ] || mv "$$link" "/config/bepinex/plugins/$$name"; done; rmdir /config/bepinex/.update-link-stash 2>/dev/null || true; }; trap restore_update_links EXIT; for link in /config/bepinex/plugins/*; do [ -L "$$link" ] || continue; name=$$(basename "$$link"); [ -d "/config/bepinex/.persistent/$$name" ] || continue; mv "$$link" "/config/bepinex/.update-link-stash/$$name"; done
+      - POST_BEPINEX_CONFIG_HOOK=for link in /config/bepinex/.update-link-stash/*; do [ -L "$$link" ] || continue; name=$$(basename "$$link"); [ -e "/config/bepinex/plugins/$$name" ] || mv "$$link" "/config/bepinex/plugins/$$name"; done; rmdir /config/bepinex/.update-link-stash 2>/dev/null || true; plugins_root="$$bepinex_path/plugins"; for d in /config/bepinex/.persistent/*/; do [ -d "$$d" ] || continue; name=$$(basename "$$d"); ln -sfn "/config/bepinex/.persistent/$$name" "$$plugins_root/$$name"; done; trap - EXIT
     restart: unless-stopped
     stop_grace_period: 2m
 

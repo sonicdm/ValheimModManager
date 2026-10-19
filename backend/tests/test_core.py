@@ -169,6 +169,41 @@ def test_make_persistent_creates_symlink(tmp_path: Path):
     assert not (tmp_path / ".persistent" / "HugeMapMod").exists()
 
 
+def test_make_persistent_rolls_back_when_symlink_creation_fails(tmp_path: Path, monkeypatch):
+    from app.services.live_sync import make_persistent
+
+    plugins = tmp_path / "plugins"
+    pkg = plugins / "HugeMapMod"
+    pkg.mkdir(parents=True)
+    (pkg / "Map.dll").write_bytes(b"MZ")
+    settings = Settings(data_dir=tmp_path / "data", bepinex_root=tmp_path, live_plugins_root=None)
+
+    def deny_symlink(self, target, target_is_directory=False):
+        raise OSError("symlinks unsupported on this filesystem")
+
+    monkeypatch.setattr(Path, "symlink_to", deny_symlink)
+    with pytest.raises(OSError, match="symlinks unsupported"):
+        make_persistent("HugeMapMod", settings)
+
+    assert (pkg / "Map.dll").read_bytes() == b"MZ"
+    assert not (settings.persistent_dir / "HugeMapMod").exists()
+
+
+def test_make_normal_keeps_stale_link_when_payload_is_missing(tmp_path: Path, monkeypatch):
+    from app.services import live_sync
+
+    plugins = tmp_path / "plugins"
+    plugins.mkdir()
+    stale_link = plugins / "HugeMapMod"
+    stale_link.write_text("stale alias", encoding="utf-8")
+    settings = Settings(data_dir=tmp_path / "data", bepinex_root=tmp_path, live_plugins_root=None)
+    monkeypatch.setattr(live_sync, "is_persistent_link", lambda path, settings=None: True)
+
+    with pytest.raises(FileNotFoundError, match=".persistent/HugeMapMod not found"):
+        live_sync.make_normal("HugeMapMod", settings)
+
+    assert stale_link.read_text(encoding="utf-8") == "stale alias"
+
 def test_restart_server_stop_bootstrap_start(monkeypatch):
     from app.services import supervisor as sup
 
