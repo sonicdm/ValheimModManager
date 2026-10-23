@@ -121,7 +121,15 @@ export default function DashboardPage() {
     setError(null);
     toast.showBusy("Restarting server (stop → bootstrap sync → start)…");
     try {
-      await api.post("/api/server/restart");
+      const result = await api.post<{
+        ok: boolean;
+        message?: string;
+        recovery_attempted?: boolean;
+        recovery_status?: string;
+      }>("/api/server/restart");
+      if (!result.ok) {
+        throw new Error(result.message || "Restart + sync failed");
+      }
       await loadServerStatus();
       await load();
       toast.showOk("Restart + sync finished.");

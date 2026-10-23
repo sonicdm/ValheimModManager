@@ -413,30 +413,22 @@ def match_installed_to_remote(
 
 
 def find_package_any_source(db: Session, dependency: str) -> tuple[str, PackageInfo, PackageVersion] | None:
-    """Resolve Team-Mod-Version dependency string across enabled sources."""
-    parts = dependency.rsplit("-", 2)
-    if len(parts) < 3:
-        # Try Team-Mod without version
-        full_name = dependency
-        min_version = None
-    else:
-        owner, name, min_version = parts[0], parts[1], parts[2]
-        # Heuristic: version looks like digits
-        if not (min_version and min_version[0].isdigit()):
-            full_name = dependency
-            min_version = None
-        else:
-            full_name = f"{owner}-{name}"
-
+    """Resolve Thunderstore-style Team-Mod-Version dependencies exactly."""
     for src in enabled_sources(db):
-        pkg = get_package(src, full_name)
-        if pkg and pkg.latest:
-            return src, pkg, pkg.latest
-        # Also try exact full_name matches for odd names with extra dashes
-        for candidate in get_cached_packages(src).values():
-            if candidate.full_name == full_name or dependency.startswith(candidate.full_name + "-"):
-                if candidate.latest:
-                    return src, candidate, candidate.latest
+        candidates = get_cached_packages(src).values()
+        for candidate in candidates:
+            if dependency == candidate.full_name:
+                return (src, candidate, candidate.latest) if candidate.latest else None
+            prefix = candidate.full_name + "-"
+            if not dependency.startswith(prefix):
+                continue
+            required_version = dependency[len(prefix) :]
+            exact = next(
+                (v for v in candidate.versions if v.version_number == required_version),
+                None,
+            )
+            if exact is not None:
+                return src, candidate, exact
     return None
 
 

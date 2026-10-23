@@ -8,6 +8,7 @@ import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import httpx
 from sqlalchemy.orm import Session
@@ -29,6 +30,11 @@ from .packages import get_package, match_installed_to_remote, resolve_dependenci
 
 logger = logging.getLogger(__name__)
 
+MAX_PACKAGE_ARCHIVE_ENTRIES = 100_000
+MAX_PACKAGE_ARCHIVE_EXPANDED_BYTES = 4 * 1024 * 1024 * 1024
+MAX_PACKAGE_MEMBER_BYTES = 512 * 1024 * 1024
+MAX_PACKAGE_DOWNLOAD_BYTES = 1024 * 1024 * 1024
+
 # Runtime / generated trees inside live-only plugins — never treat as package-owned.
 _RUNTIME_DIR_NAMES = frozenset({"map_data", "cache", "logs", ".git", "__pycache__"})
 
@@ -47,12 +53,23 @@ def _stamp() -> str:
 
 async def download_package(url: str, dest: Path) -> Path:
     dest.parent.mkdir(parents=True, exist_ok=True)
-    async with httpx.AsyncClient(timeout=180.0, follow_redirects=True) as client:
-        async with client.stream("GET", url) as response:
-            response.raise_for_status()
-            with dest.open("wb") as f:
-                async for chunk in response.aiter_bytes():
-                    f.write(chunk)
+    try:
+        async with httpx.AsyncClient(timeout=180.0, follow_redirects=True) as client:
+            async with client.stream("GET", url) as response:
+                response.raise_for_status()
+                content_length = response.headers.get("content-length")
+                if content_length and int(content_length) > MAX_PACKAGE_DOWNLOAD_BYTES:
+                    raise ValueError("Package download exceeds the 1 GiB limit")
+                written = 0
+                with dest.open("wb") as f:
+                    async for chunk in response.aiter_bytes():
+                        written += len(chunk)
+                        if written > MAX_PACKAGE_DOWNLOAD_BYTES:
+                            raise ValueError("Package download exceeds the 1 GiB limit")
+                        f.write(chunk)
+    except Exception:
+        dest.unlink(missing_ok=True)
+        raise
     return dest
 
 
@@ -69,9 +86,16 @@ def _safe_extract(zip_path: Path, dest: Path) -> list[Path]:
     dest.mkdir(parents=True, exist_ok=True)
     extracted: list[Path] = []
     with zipfile.ZipFile(zip_path, "r") as zf:
+        infos = zf.infolist()
+        if len(infos) > MAX_PACKAGE_ARCHIVE_ENTRIES:
+            raise ValueError("Package archive contains too many files")
+        if sum(info.file_size for info in infos) > MAX_PACKAGE_ARCHIVE_EXPANDED_BYTES:
+            raise ValueError("Package archive expands beyond the 4 GiB limit")
+        if any(info.file_size > MAX_PACKAGE_MEMBER_BYTES for info in infos):
+            raise ValueError("Package archive contains a file larger than 512 MiB")
         # Directories first, then shorter paths, so parents exist before children.
         members = sorted(
-            zf.infolist(),
+            infos,
             key=lambda info: (
                 0 if (info.is_dir() or info.filename.replace("\\", "/").endswith("/")) else 1,
                 info.filename.replace("\\", "/").count("/"),
@@ -295,17 +319,15 @@ async def install_packages(
             )
             .first()
         )
+        old_owned_paths = [f.relative_path for f in existing.files] if existing else []
         if existing and existing.managed and existing.version == item["version"] and existing.enabled:
             installed.append(existing)
             continue
 
-        zip_name = f"{item['full_name']}-{item['version']}.zip"
-        zip_path = settings.downloads_dir / zip_name
+        zip_path = settings.downloads_dir / f"package-{uuid4().hex}.zip"
         await download_package(item["download_url"], zip_path)
 
-        stage = settings.staging_dir / f"{item['full_name']}-{item['version']}"
-        if stage.exists():
-            shutil.rmtree(stage)
+        stage = settings.staging_dir / f"package-{uuid4().hex}"
         stage.mkdir(parents=True)
         try:
             _safe_extract(zip_path, stage)
@@ -324,13 +346,7 @@ async def install_packages(
                             to_overwrite.append(dest_dir / path.relative_to(plugin_root))
                 _backup_files(to_overwrite, item["full_name"], settings)
                 copied = merge_tree_into(plugin_root, dest_dir)
-                try:
-                    ensure_persistent_symlink(dest_dir.name, settings)
-                except FileExistsError:
-                    logger.warning(
-                        "Could not create plugins symlink for persistent package %s",
-                        dest_dir.name,
-                    )
+                ensure_persistent_symlink(dest_dir.name, settings)
                 logger.info(
                     "Persistent update of %s → %s (%s files merged)",
                     item["full_name"],
@@ -357,12 +373,35 @@ async def install_packages(
                         target = settings.patchers_dir / rel
                         ensure_within(settings.patchers_dir, target.parent)
                         target.parent.mkdir(parents=True, exist_ok=True)
+                        _backup_files([target], f"{item['full_name']}-patcher-{rel}", settings)
                         shutil.copy2(path, target)
                         patcher_files.append((f"../patchers/{rel}", target))
 
             normalized = _normalize_copied(copied, files_root, dest_dir.name)
             for rel, full in patcher_files:
                 normalized.append((rel, full))
+
+            # Persistent updates merge into place to keep runtime data. Prune
+            # files this package previously owned but the new version removed.
+            new_owned = {rel for rel, _ in normalized}
+            if existing is not None:
+                other_owned = {
+                    owned.relative_path
+                    for other in db.query(InstalledPackage)
+                    .filter(InstalledPackage.id != existing.id)
+                    .all()
+                    for owned in other.files
+                }
+                for relative in old_owned_paths:
+                    if relative in new_owned or relative in other_owned:
+                        continue
+                    try:
+                        root, target = _owned_file_path(files_root, relative, settings)
+                    except PathEscapeError:
+                        logger.warning("Skipping unsafe stale owned path %r", relative)
+                        continue
+                    if target.is_file() or target.is_symlink():
+                        target.unlink()
 
             if existing is None:
                 existing = InstalledPackage(
@@ -506,6 +545,20 @@ def _files_root_for_path(path: Path | str, settings: Settings) -> Path:
     return settings.plugins_dir
 
 
+def _owned_file_path(files_root: Path, relative_path: str, settings: Settings) -> tuple[Path, Path]:
+    """Resolve a package-owned file, including legacy patcher records."""
+    normalized = relative_path.replace("\\", "/")
+    if normalized.startswith("../patchers/"):
+        root = settings.patchers_dir
+        relative = normalized[len("../patchers/") :]
+    else:
+        root = files_root
+        relative = normalized
+    target = root / relative
+    ensure_within(root, target)
+    return root, target
+
+
 def install_from_zip_file(
     db: Session,
     zip_path: Path,
@@ -515,9 +568,7 @@ def install_from_zip_file(
     """Install a manually uploaded Thunderstore-style zip into config (or live if already live-only)."""
     settings = get_settings()
     stamp = _stamp()
-    stage = settings.staging_dir / f"import-{stamp}"
-    if stage.exists():
-        shutil.rmtree(stage)
+    stage = settings.staging_dir / f"import-{uuid4().hex}"
     stage.mkdir(parents=True)
     try:
         _safe_extract(zip_path, stage)
@@ -561,6 +612,7 @@ def install_from_zip_file(
         existing = (
             db.query(InstalledPackage).filter(InstalledPackage.full_name == full_name).first()
         )
+        old_owned_paths = [f.relative_path for f in existing.files] if existing else []
         dest_dir, files_root, live_only = _resolve_dest(settings, item, existing)
         ensure_within(files_root, dest_dir)
 
@@ -571,13 +623,7 @@ def install_from_zip_file(
                     to_overwrite.append(dest_dir / path.relative_to(plugin_root))
             _backup_files(to_overwrite, full_name, settings)
             copied = merge_tree_into(plugin_root, dest_dir)
-            try:
-                ensure_persistent_symlink(dest_dir.name, settings)
-            except FileExistsError:
-                logger.warning(
-                    "Could not create plugins symlink for persistent package %s",
-                    dest_dir.name,
-                )
+            ensure_persistent_symlink(dest_dir.name, settings)
         else:
             if dest_dir.exists():
                 backup_tmp = settings.backups_dir / "pre_install" / f"{full_name}-{stamp}"
@@ -588,6 +634,7 @@ def install_from_zip_file(
             copied = _copy_tree(plugin_root, dest_dir)
 
         patchers = _detect_patchers(stage)
+        patcher_files: list[tuple[str, Path]] = []
         if patchers and not live_only:
             for path in patchers.rglob("*"):
                 if path.is_file():
@@ -595,9 +642,30 @@ def install_from_zip_file(
                     target = settings.patchers_dir / rel
                     ensure_within(settings.patchers_dir, target.parent)
                     target.parent.mkdir(parents=True, exist_ok=True)
+                    _backup_files([target], f"{full_name}-patcher-{rel}", settings)
                     shutil.copy2(path, target)
+                    patcher_files.append((f"../patchers/{rel}", target))
 
         normalized = _normalize_copied(copied, files_root, dest_dir.name)
+        normalized.extend(patcher_files)
+        new_owned = {rel for rel, _ in normalized}
+        if existing is not None:
+            other_owned = {
+                owned.relative_path
+                for other in db.query(InstalledPackage)
+                .filter(InstalledPackage.id != existing.id)
+                .all()
+                for owned in other.files
+            }
+            for relative in old_owned_paths:
+                if relative in new_owned or relative in other_owned:
+                    continue
+                try:
+                    _root, target = _owned_file_path(files_root, relative, settings)
+                except PathEscapeError:
+                    continue
+                if target.is_file() or target.is_symlink():
+                    target.unlink()
 
         source = "manual"
         matched = match_installed_to_remote(
@@ -790,9 +858,8 @@ def uninstall_package(db: Session, package_id: int, *, force: bool = False) -> N
     package_folder_name = Path(pkg.install_path).name
 
     for owned in list(pkg.files):
-        target = files_root / owned.relative_path
         try:
-            ensure_within(files_root, target if target.exists() else target.parent)
+            _root, target = _owned_file_path(files_root, owned.relative_path, settings)
         except PathEscapeError:
             continue
         if target.is_file():
@@ -851,7 +918,17 @@ def set_enabled(db: Session, package_id: int, enabled: bool) -> InstalledPackage
         paths = [install]
     elif install.is_dir():
         paths = list(install.rglob("*.dll")) + list(install.rglob("*.dll.disabled"))
-
+    for owned in pkg.files:
+        if not owned.relative_path.replace("\\", "/").startswith("../patchers/"):
+            continue
+        try:
+            _root, target = _owned_file_path(
+                _files_root_for_path(pkg.install_path, settings), owned.relative_path, settings
+            )
+        except PathEscapeError:
+            continue
+        if target.suffix.lower() == ".dll" or target.name.lower().endswith(".dll.disabled"):
+            paths.append(target)
     for path in paths:
         # Skip runtime trees
         try:

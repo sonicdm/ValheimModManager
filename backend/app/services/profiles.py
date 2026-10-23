@@ -18,6 +18,7 @@ from . import r2_profile
 from .live_sync import path_is_under_live
 from .packages import get_cached_packages, get_package
 from .r2_profile import ExportMode, ParsedProfile, ProfileModSpec
+from .paths import ensure_within, safe_join
 from .settings_service import get_setting, log_activity, set_setting
 
 logger = logging.getLogger(__name__)
@@ -136,13 +137,8 @@ def _store_configs(profile_id: int, files: dict[str, bytes]) -> None:
         rel = rel.replace("\\", "/").strip("/")
         if not rel or rel.endswith("/"):
             continue
-        target = dest_root / rel
-        # Zip dir entries can previously have been written as empty files — clear parents.
-        for parent in [target.parent, *target.parents]:
-            if parent == dest_root or not str(parent).startswith(str(dest_root)):
-                continue
-            if parent.is_file():
-                parent.unlink()
+        target = safe_join(dest_root, rel)
+        ensure_within(dest_root, target)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(content)
 
@@ -507,7 +503,8 @@ async def activate_profile(
         written = r2_profile.apply_configs_to_bepinex(settings.bepinex_root, files)
         result["configs_written"] = len(written)
 
-    set_setting(db, "active_profile_id", str(row.id))
+    if not result["errors"]:
+        set_setting(db, "active_profile_id", str(row.id))
     set_setting(db, "restart_required", True)
     log_activity(
         db,

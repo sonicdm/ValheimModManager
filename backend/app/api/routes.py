@@ -72,6 +72,19 @@ from ..services.settings_service import get_all_settings, get_setting, log_activ
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api")
+MAX_MANUAL_PACKAGE_UPLOAD_BYTES = 1024 * 1024 * 1024
+MAX_PROFILE_UPLOAD_BYTES = 256 * 1024 * 1024
+
+
+async def _read_upload_limited(file: UploadFile, limit: int) -> bytes:
+    chunks: list[bytes] = []
+    total = 0
+    while chunk := await file.read(1024 * 1024):
+        total += len(chunk)
+        if total > limit:
+            raise ValueError(f"Upload exceeds the {limit // (1024 * 1024)} MiB limit")
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 def _pkg_out(pkg: InstalledPackage, pending_map: dict[str, str] | None = None) -> InstalledPackageOut:
@@ -165,7 +178,10 @@ def login(
 
 
 @router.post("/auth/logout")
-def logout(response: Response) -> dict[str, str]:
+def logout(
+    response: Response,
+    user: Annotated[AdminUser, Depends(_auth_user)],
+) -> dict[str, str]:
     clear_session_cookie(response)
     return {"status": "ok"}
 
@@ -292,7 +308,6 @@ async def import_plugin(
 ) -> InstalledPackageOut:
     """Manually import a .zip package or a .dll plugin."""
     from pathlib import Path
-    import shutil
 
     filename = file.filename or "upload"
     suffix = Path(filename).suffix.lower()
@@ -306,7 +321,12 @@ async def import_plugin(
 
     try:
         with dest.open("wb") as out:
-            shutil.copyfileobj(file.file, out)
+            total = 0
+            while chunk := await file.read(1024 * 1024):
+                total += len(chunk)
+                if total > MAX_MANUAL_PACKAGE_UPLOAD_BYTES:
+                    raise ValueError("Upload exceeds the 1024 MiB limit")
+                out.write(chunk)
         if suffix == ".zip":
             pkg = installer.install_from_zip_file(db, dest, full_name_override=full_name or None)
         else:
@@ -324,6 +344,7 @@ async def import_plugin(
         )
         raise HTTPException(500, str(exc)) from exc
     finally:
+        dest.unlink(missing_ok=True)
         try:
             file.file.close()
         except Exception:
@@ -957,7 +978,14 @@ async def import_profile(
     activate: Annotated[bool, Form()] = False,
     file: UploadFile | None = File(None),
 ) -> ProfileOut:
-    file_bytes = await file.read() if file is not None else None
+    try:
+        file_bytes = (
+            await _read_upload_limited(file, MAX_PROFILE_UPLOAD_BYTES)
+            if file is not None
+            else None
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
     if not code and not file_bytes:
         raise HTTPException(status_code=400, detail="Provide code or .r2z file")
     try:

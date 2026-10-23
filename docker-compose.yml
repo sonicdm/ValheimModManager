@@ -18,8 +18,8 @@ services:
     environment:
       - DATA_DIR=/data
       - BEPINEX_ROOT=/valheim/bepinex
-      - SECRET_KEY=${MOD_MANAGER_SECRET_KEY:-change-me-in-production}
-      - ADMIN_PASSWORD=${MOD_MANAGER_ADMIN_PASSWORD:-changeme}
+      - SECRET_KEY=${MOD_MANAGER_SECRET_KEY:?set MOD_MANAGER_SECRET_KEY}
+      - ADMIN_PASSWORD=${MOD_MANAGER_ADMIN_PASSWORD:?set MOD_MANAGER_ADMIN_PASSWORD}
       # Prefer the Valheim container DNS name on a shared Docker network.
       - SUPERVISOR_URL=${SUPERVISOR_URL:-http://valheim:9001}
       - SUPERVISOR_USER=${SUPERVISOR_USER:-admin}

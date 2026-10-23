@@ -127,7 +127,7 @@ async def check_for_updates(db: Session) -> list[PendingUpdate]:
                 .filter(PendingUpdate.source == pkg.source, PendingUpdate.full_name == pkg.full_name)
                 .first()
             )
-            if existing and existing.status == "queued":
+            if existing and existing.status in ("queued", "deferred", "failed", "done"):
                 db.delete(existing)
             continue
         if pkg.pinned and not get_setting(db, "update_pinned_packages", False):
@@ -154,7 +154,7 @@ async def check_for_updates(db: Session) -> list[PendingUpdate]:
             pending.current_version = pkg.version
             pending.target_version = latest
             pending.download_url = remote.latest.download_url
-            if pending.status in ("done", "failed"):
+            if pending.status in ("done", "failed", "deferred"):
                 pending.status = "queued"
         found.append(pending)
 

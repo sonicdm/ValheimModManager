@@ -18,6 +18,7 @@ SUPERVISOR_TIMEOUT_SECONDS = 120.0
 BOOTSTRAP_PROGRAM = "valheim-bootstrap"
 BOOTSTRAP_WAIT_SECONDS = 300.0
 BOOTSTRAP_POLL_SECONDS = 1.0
+SERVER_START_WAIT_SECONDS = 120.0
 
 
 class _TimeoutTransport(xmlrpc.client.Transport):
@@ -137,6 +138,41 @@ def _wait_bootstrap_exited(proxy: xmlrpc.client.ServerProxy) -> str:
     raise TimeoutError(f"{BOOTSTRAP_PROGRAM} did not exit within {int(BOOTSTRAP_WAIT_SECONDS)}s (last={last})")
 
 
+def _start_after_failed_bootstrap(proxy: xmlrpc.client.ServerProxy, program: str, reason: str) -> dict[str, Any]:
+    """Try to avoid leaving the game stopped when bootstrap fails."""
+    try:
+        proxy.supervisor.startProcess(program)
+        state = _process_state(proxy, program)
+        return {
+            "ok": False,
+            "message": f"{reason}; attempted to start {program} for recovery (state={state})",
+            "synced": False,
+            "recovery_attempted": True,
+            "recovery_status": state,
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "message": f"{reason}; recovery start also failed: {_friendly_error(exc)}",
+            "synced": False,
+            "recovery_attempted": True,
+            "recovery_status": "failed",
+        }
+
+
+def _wait_server_started(proxy: xmlrpc.client.ServerProxy, program: str) -> str:
+    deadline = time.monotonic() + SERVER_START_WAIT_SECONDS
+    last = ""
+    while time.monotonic() < deadline:
+        last = _process_state(proxy, program)
+        if last == "RUNNING":
+            return last
+        if last in {"EXITED", "FATAL", "STOPPED"}:
+            raise RuntimeError(f"{program} entered {last} during startup")
+        time.sleep(BOOTSTRAP_POLL_SECONDS)
+    raise TimeoutError(f"{program} did not reach RUNNING within {int(SERVER_START_WAIT_SECONDS)}s (last={last})")
+
+
 def diagnose_supervisor(db: Session) -> dict[str, Any]:
     result: dict[str, Any] = {
         "configured": supervisor_configured(db),
@@ -201,20 +237,20 @@ def restart_server(db: Session) -> dict[str, Any]:
             if "ALREADY_STARTED" not in str(exc) and "ALREADYSTARTED" not in str(exc):
                 raise
 
-        bootstrap_state = _wait_bootstrap_exited(proxy)
+        try:
+            bootstrap_state = _wait_bootstrap_exited(proxy)
+        except Exception as exc:
+            return _start_after_failed_bootstrap(
+                proxy, program, f"{BOOTSTRAP_PROGRAM} failed: {_friendly_error(exc)}"
+            )
         if bootstrap_state == "FATAL":
-            return {
-                "ok": False,
-                "message": f"{BOOTSTRAP_PROGRAM} exited FATAL",
-                "synced": False,
-                "bootstrap": bootstrap_state,
-            }
+            return _start_after_failed_bootstrap(proxy, program, f"{BOOTSTRAP_PROGRAM} exited FATAL")
 
         proxy.supervisor.startProcess(program)
-        info = proxy.supervisor.getProcessInfo(program)
+        status = _wait_server_started(proxy, program)
         return {
             "ok": True,
-            "status": info.get("statename"),
+            "status": status,
             "message": f"Ran {BOOTSTRAP_PROGRAM} then started {program}",
             "synced": True,
             "bootstrap": bootstrap_state,

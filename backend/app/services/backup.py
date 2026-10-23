@@ -10,9 +10,9 @@ from sqlalchemy.orm import Session
 
 from ..config import get_settings
 from ..models import BackupRecord, ConfigAssociation, InstalledPackage, OwnedFile
-from .live_sync import path_is_under_live
-from .paths import ensure_within
-from .settings_service import log_activity
+from .live_sync import make_normal, make_persistent, path_is_under_live
+from .paths import ensure_within, safe_join
+from .settings_service import log_activity, set_setting
 
 
 def _package_snapshot(pkg: InstalledPackage) -> dict[str, Any]:
@@ -53,8 +53,10 @@ def create_backup(
     label = label or f"backup-{stamp}"
     backup_root = settings.backups_dir / stamp
     plugins_out = backup_root / "plugins"
+    patchers_out = backup_root / "patchers"
     configs_out = backup_root / "configs"
     plugins_out.mkdir(parents=True)
+    patchers_out.mkdir(parents=True)
     configs_out.mkdir(parents=True)
 
     query = db.query(InstalledPackage)
@@ -72,20 +74,34 @@ def create_backup(
             else settings.plugins_dir
         )
         for owned in pkg.files:
-            src = files_root / owned.relative_path
+            relative = owned.relative_path.replace("\\", "/")
+            if relative.startswith("../patchers/"):
+                src_root = settings.patchers_dir
+                src_rel = relative[len("../patchers/") :]
+                dest_root = patchers_out
+            else:
+                src_root = files_root
+                src_rel = relative
+                dest_root = plugins_out
+            src = safe_join(src_root, src_rel)
             if not src.is_file():
                 continue
             try:
-                ensure_within(files_root, src)
+                ensure_within(src_root, src)
             except Exception:
                 continue
-            dest = plugins_out / owned.relative_path
+            dest = safe_join(dest_root, src_rel)
+            ensure_within(dest_root, dest)
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dest)
         for cfg in pkg.configs:
-            src = settings.config_dir / cfg.relative_path
+            src = safe_join(settings.config_dir, cfg.relative_path)
             if src.is_file():
-                shutil.copy2(src, configs_out / cfg.relative_path)
+                ensure_within(settings.config_dir, src)
+                dest = safe_join(configs_out, cfg.relative_path)
+                ensure_within(configs_out, dest)
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dest)
 
     # Also copy all cfg files when full backup
     if not package_ids:
@@ -140,17 +156,45 @@ def restore_backup(db: Session, backup_id: int) -> BackupRecord:
 
     for snap in inventory.get("packages") or []:
         install_hint = snap.get("install_path") or ""
+        target_persistent = path_is_under_live(install_hint, settings)
+        pkg = (
+            db.query(InstalledPackage)
+            .filter(
+                InstalledPackage.source == (snap.get("source") or "local"),
+                InstalledPackage.full_name == snap["full_name"],
+            )
+            .first()
+        )
+        # Move the current tree when the snapshot changes its storage class.
+        if pkg is not None:
+            current_persistent = path_is_under_live(pkg.install_path, settings)
+            if target_persistent and not current_persistent:
+                source_folder = settings.plugins_dir / Path(pkg.install_path).name
+                if source_folder.is_dir():
+                    make_persistent(source_folder.name, settings)
+            elif current_persistent and not target_persistent:
+                make_normal(Path(pkg.install_path).name, settings)
+
         files_root = (
             settings.persistent_dir
-            if path_is_under_live(install_hint, settings)
+            if target_persistent
             else settings.plugins_dir
         )
         for fmeta in snap.get("files") or []:
-            rel = fmeta["relative_path"]
-            src = backup_root / "plugins" / rel
+            rel = str(fmeta["relative_path"]).replace("\\", "/")
+            if rel.startswith("../patchers/"):
+                target_root = settings.patchers_dir
+                owned_rel = rel[len("../patchers/") :]
+                # Older backups used plugins/../patchers/, which resolves here.
+                src = safe_join(backup_root / "patchers", owned_rel)
+            else:
+                target_root = files_root
+                owned_rel = rel
+                src = safe_join(backup_root / "plugins", rel)
             if not src.is_file():
                 continue
-            dest = files_root / rel
+            dest = safe_join(target_root, owned_rel)
+            ensure_within(target_root, dest)
             # Skip if dest exists, differs from backup, and was modified after backup
             if dest.is_file() and record.created_at:
                 dest_mtime = datetime.fromtimestamp(dest.stat().st_mtime, tz=timezone.utc)
@@ -172,13 +216,14 @@ def restore_backup(db: Session, backup_id: int) -> BackupRecord:
                     # Unrelated change after backup — do not overwrite
                     continue
             dest.parent.mkdir(parents=True, exist_ok=True)
-            ensure_within(files_root, dest.parent)
+            ensure_within(target_root, dest.parent)
             shutil.copy2(src, dest)
 
         for cfg_name in snap.get("configs") or []:
-            src = backup_root / "configs" / cfg_name
+            src = safe_join(backup_root / "configs", cfg_name)
             if src.is_file():
-                dest = settings.config_dir / cfg_name
+                dest = safe_join(settings.config_dir, cfg_name)
+                ensure_within(settings.config_dir, dest)
                 if dest.is_file() and record.created_at:
                     dest_mtime = datetime.fromtimestamp(dest.stat().st_mtime, tz=timezone.utc)
                     created = record.created_at
@@ -186,14 +231,10 @@ def restore_backup(db: Session, backup_id: int) -> BackupRecord:
                         created = created.replace(tzinfo=timezone.utc)
                     if dest_mtime > created:
                         continue
+                dest.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(src, dest)
 
         # Restore DB row
-        pkg = (
-            db.query(InstalledPackage)
-            .filter(InstalledPackage.full_name == snap["full_name"])
-            .first()
-        )
         if pkg is None:
             pkg = InstalledPackage(
                 source=snap.get("source") or "local",
@@ -215,9 +256,20 @@ def restore_backup(db: Session, backup_id: int) -> BackupRecord:
             db.add(pkg)
             db.flush()
         else:
+            pkg.source = snap.get("source") or pkg.source
+            pkg.full_name = snap["full_name"]
+            pkg.name = snap.get("name") or snap["full_name"]
+            pkg.owner = snap.get("owner")
             pkg.version = snap.get("version")
+            pkg.plugin_guid = snap.get("plugin_guid")
+            pkg.install_path = install_hint or str(settings.plugins_dir / snap["full_name"])
+            pkg.managed = bool(snap.get("managed"))
             pkg.enabled = bool(snap.get("enabled", True))
             pkg.pinned = bool(snap.get("pinned"))
+            pkg.auto_update = bool(snap.get("auto_update", True))
+            pkg.description = snap.get("description")
+            pkg.icon_url = snap.get("icon_url")
+            pkg.package_url = snap.get("package_url")
             pkg.dependencies_json = json.dumps(snap.get("dependencies") or [])
             pkg.files.clear()
 
@@ -234,6 +286,7 @@ def restore_backup(db: Session, backup_id: int) -> BackupRecord:
             pkg.configs.append(ConfigAssociation(relative_path=cfg_name))
 
     log_activity(db, "rollback", result="ok", message=f"Restored backup {record.label}")
+    set_setting(db, "restart_required", True)
     db.commit()
     db.refresh(record)
     return record
