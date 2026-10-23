@@ -7,6 +7,7 @@ import io
 import logging
 import re
 import zipfile
+from pathlib import PurePosixPath
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, BinaryIO, Iterable, Literal
@@ -17,7 +18,7 @@ import yaml
 logger = logging.getLogger(__name__)
 
 PROFILE_DATA_PREFIX = "#r2modman\n"
-USER_AGENT = "ValheimModManager/0.3.0 (compatible; Gale/r2modman profile interop)"
+USER_AGENT = "ValheimModManager/0.4.0 (compatible; Gale/r2modman profile interop)"
 
 THUNDERSTORE_GET = "https://thunderstore.io/api/experimental/legacyprofile/get/{code}/"
 THUNDERSTORE_CREATE = "https://thunderstore.io/api/experimental/legacyprofile/create/"
@@ -81,7 +82,14 @@ def source_label(source: str) -> str:
 
 def normalize_config_member(path: str) -> str | None:
     """Map zip member → path relative to bepinex_root, or None if ignored."""
-    p = path.replace("\\", "/").lstrip("/")
+    p = path.replace("\\", "/")
+    pure = PurePosixPath(p)
+    # Profile archives are supplied by users and may contain arbitrary config
+    # paths. Reject traversal and absolute/drive paths before storing any bytes.
+    if not p or "\x00" in p or pure.is_absolute() or ".." in pure.parts:
+        return None
+    if re.match(r"^[A-Za-z]:", p):
+        return None
     if not p or p.endswith("/"):
         return None
     if p in ("export.r2x", "changelog.txt", "doorstop_config.ini"):
@@ -130,7 +138,14 @@ def parse_export_r2x(text: str) -> tuple[str, list[ProfileModSpec], str | None, 
 
 def parse_r2z_bytes(data: bytes) -> ParsedProfile:
     with zipfile.ZipFile(io.BytesIO(data)) as zf:
-        names = zf.namelist()
+        infos = zf.infolist()
+        if len(infos) > 10_000:
+            raise ValueError("Profile archive contains too many files")
+        if sum(info.file_size for info in infos) > 256 * 1024 * 1024:
+            raise ValueError("Profile archive expands beyond the 256 MiB limit")
+        if any(info.file_size > 64 * 1024 * 1024 for info in infos):
+            raise ValueError("Profile archive contains a file larger than 64 MiB")
+        names = [info.filename for info in infos]
         if "export.r2x" not in names:
             raise ValueError("Not a Gale/r2modman profile zip (missing export.r2x)")
         text = zf.read("export.r2x").decode("utf-8")

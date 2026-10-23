@@ -172,7 +172,11 @@ def ensure_persistent_symlink(package_name: str, settings: Settings | None = Non
 
 
 def make_persistent(package_name: str, settings: Settings | None = None) -> Path:
-    """Move plugins/<name> → .persistent/<name> and leave a symlink in plugins."""
+    """Move plugins/<name> → .persistent/<name> and leave a symlink in plugins.
+
+    Roll back the move if the filesystem refuses the link, so a failed toggle
+    never strands the package away from its original path.
+    """
     settings = settings or get_settings()
     if "/" in package_name or "\\" in package_name or package_name in (".", ".."):
         raise ValueError("Invalid package name")
@@ -184,14 +188,29 @@ def make_persistent(package_name: str, settings: Settings | None = None) -> Path
 
     settings.persistent_dir.mkdir(parents=True, exist_ok=True)
     dest = settings.persistent_dir / package_name
-    if dest.exists():
+    if dest.exists() or dest.is_symlink():
         raise FileExistsError(f".persistent/{package_name} already exists")
 
     # Move real tree, then create symlink with game-container absolute target.
     shutil.move(str(src), str(dest))
     target = persistent_symlink_target(package_name)
     link = settings.plugins_dir / package_name
-    link.symlink_to(target, target_is_directory=True)
+    try:
+        link.symlink_to(target, target_is_directory=True)
+    except OSError:
+        # Remove only a failed link entry, then put the package back.
+        try:
+            if link.is_symlink() or link.exists():
+                link.unlink()
+            if not src.exists() and dest.exists():
+                shutil.move(str(dest), str(src))
+        except OSError:
+            logger.exception(
+                "Failed to roll back persistent move for %s; package data remains at %s",
+                package_name,
+                dest,
+            )
+        raise
     logger.info("Made %s persistent → %s (link %s)", package_name, dest, target)
     return dest
 
@@ -206,10 +225,12 @@ def make_normal(package_name: str, settings: Settings | None = None) -> Path:
     if not is_persistent_link(link, settings) and not dest.is_dir():
         raise FileNotFoundError(f"{package_name} is not a persistent package")
 
-    if link.is_symlink() or link.exists():
-        link.unlink()
+    # Check the payload before unlinking: a stale alias must not be destroyed
+    # when its persistent target has disappeared.
     if not dest.exists():
         raise FileNotFoundError(f".persistent/{package_name} not found")
+    if link.is_symlink() or link.exists():
+        link.unlink()
     shutil.move(str(dest), str(link))
     logger.info("Made %s normal → %s", package_name, link)
     return link

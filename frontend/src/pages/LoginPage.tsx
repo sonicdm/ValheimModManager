@@ -40,7 +40,7 @@ export default function LoginPage() {
         <label className="mt-6 block text-sm">
           <span className="text-bark/80">Username</span>
           <input
-            className="mt-1 w-full rounded-md border border-bark/20 bg-white px-3 py-2"
+            className="mt-1 w-full rounded-md border border-bark/20 bg-white px-3 py-2 text-ink placeholder:text-bark/50 focus:border-moss focus:outline-none focus:ring-2 focus:ring-moss/30 dark:bg-mist"
             value={username}
             onChange={(e) => setUsername(e.target.value)}
             autoComplete="username"
@@ -50,7 +50,7 @@ export default function LoginPage() {
           <span className="text-bark/80">Password</span>
           <input
             type="password"
-            className="mt-1 w-full rounded-md border border-bark/20 bg-white px-3 py-2"
+            className="mt-1 w-full rounded-md border border-bark/20 bg-white px-3 py-2 text-ink placeholder:text-bark/50 focus:border-moss focus:outline-none focus:ring-2 focus:ring-moss/30 dark:bg-mist"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             autoComplete="current-password"
