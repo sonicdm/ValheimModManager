@@ -322,20 +322,46 @@ async def upload_share_code(zip_bytes: bytes, *, backend: str) -> str:
         return key_s
 
 
+_SKIP_CONFIG_TOP = frozenset({"plugins", "patchers", ".persistent", "cache", "core"})
+
+
+def _disk_rel_from_profile_config(rel: str) -> str:
+    """Gale/r2modman store config/foo.cfg; CVT keeps foo.cfg at bepinex root."""
+    rel = rel.replace("\\", "/").strip("/")
+    if rel.startswith("BepInEx/"):
+        rel = rel[len("BepInEx/") :]
+    if rel.startswith("config/"):
+        return rel[len("config/") :]
+    if rel == "config":
+        return ""
+    return rel
+
+
 def collect_bepinex_configs(bepinex_root: Path) -> dict[str, bytes]:
-    """Read config files from a live BepInEx tree for export."""
+    """Read config files from the CVT flat BepInEx tree for profile export.
+
+    Keys use Gale-style ``config/...`` paths even though files live next to
+    ``plugins/`` on disk (live ``BepInEx/config`` → ``/config/bepinex``).
+    """
     out: dict[str, bytes] = {}
-    config_dir = bepinex_root / "config"
-    if not config_dir.is_dir():
+    if not bepinex_root.is_dir():
         return out
-    for path in config_dir.rglob("*"):
-        if not path.is_file():
+    for path in bepinex_root.rglob("*"):
+        if not path.is_file() or path.is_symlink():
+            continue
+        try:
+            rel = path.relative_to(bepinex_root).as_posix()
+        except ValueError:
+            continue
+        top = rel.split("/", 1)[0]
+        if top in _SKIP_CONFIG_TOP:
             continue
         if path.suffix.lower() not in {".cfg", ".txt", ".json", ".yml", ".yaml", ".ini"}:
             continue
-        rel = path.relative_to(bepinex_root).as_posix()
+        # Export as config/<rel> for r2modman/Gale zip compatibility.
+        export_rel = rel if rel.startswith("config/") else f"config/{rel}"
         try:
-            out[rel] = path.read_bytes()
+            out[export_rel] = path.read_bytes()
         except OSError:
             continue
     return out
@@ -345,10 +371,13 @@ def apply_configs_to_bepinex(bepinex_root: Path, files: dict[str, bytes]) -> lis
     written: list[str] = []
     root = bepinex_root.resolve()
     for rel, content in files.items():
-        rel = rel.replace("\\", "/").strip("/")
-        if not rel or rel.endswith("/"):
+        disk_rel = _disk_rel_from_profile_config(rel)
+        if not disk_rel or disk_rel.endswith("/"):
             continue
-        dest = (bepinex_root / rel).resolve()
+        top = disk_rel.split("/", 1)[0]
+        if top in _SKIP_CONFIG_TOP:
+            continue
+        dest = (bepinex_root / disk_rel).resolve()
         try:
             dest.relative_to(root)
         except ValueError:
@@ -366,5 +395,5 @@ def apply_configs_to_bepinex(bepinex_root: Path, files: dict[str, bytes]) -> lis
             cursor = cursor.parent
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(content)
-        written.append(rel)
+        written.append(disk_rel)
     return written

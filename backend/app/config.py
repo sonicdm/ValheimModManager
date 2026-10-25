@@ -65,7 +65,9 @@ class Settings(BaseSettings):
 
     @property
     def config_dir(self) -> Path:
-        return self.bepinex_root / "config"
+        # CVT/lloesche: live BepInEx/config → /config/bepinex, so .cfg files sit
+        # flat next to plugins/ and patchers/ (not under bepinex/config/).
+        return self.bepinex_root
 
     @property
     def persistent_dir(self) -> Path:

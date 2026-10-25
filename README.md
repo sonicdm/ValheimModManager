@@ -77,7 +77,7 @@ Everything already on disk. You can import a zip/DLL, disable without deleting, 
 
 ### Config
 
-`.cfg` files under `config/bepinex/config`. Structured editor when the file parses cleanly, raw text otherwise. Save, then restart if the mod only reads config at startup.
+`.cfg` files under `config/bepinex/` (flat — the Valheim image symlinks live `BepInEx/config` → `/config/bepinex`). Structured editor when the file parses cleanly, raw text otherwise. Save, then restart if the mod only reads config at startup.
 
 ![Config](docs/screenshots/config.png)
 

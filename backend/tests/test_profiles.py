@@ -154,6 +154,37 @@ def test_normalize_config_ignores_plugins_cache_and_dirs():
     assert r2_profile.normalize_config_member("config/RecipePinner_Data/") is None
 
 
+def test_cvt_flat_config_collect_and_apply(tmp_path: Path):
+    """CVT/lloesche: .cfg files live at bepinex root, not bepinex/config/."""
+    root = tmp_path / "bepinex"
+    (root / "plugins" / "SomeMod").mkdir(parents=True)
+    (root / "plugins" / "SomeMod" / "ignore.cfg").write_bytes(b"nope")
+    (root / "BepInEx.cfg").write_bytes(b"[Core]\n")
+    (root / "server_devcommands.cfg").write_bytes(b"[General]\n")
+
+    collected = r2_profile.collect_bepinex_configs(root)
+    assert collected == {
+        "config/BepInEx.cfg": b"[Core]\n",
+        "config/server_devcommands.cfg": b"[General]\n",
+    }
+
+    dest = tmp_path / "restore"
+    dest.mkdir()
+    written = r2_profile.apply_configs_to_bepinex(
+        dest,
+        {
+            "config/foo.cfg": b"a=1\n",
+            "BepInEx/config/bar.cfg": b"b=2\n",
+            "config/plugins/evil.cfg": b"skip\n",
+        },
+    )
+    assert set(written) == {"foo.cfg", "bar.cfg"}
+    assert (dest / "foo.cfg").read_bytes() == b"a=1\n"
+    assert (dest / "bar.cfg").read_bytes() == b"b=2\n"
+    assert not (dest / "plugins").exists()
+    assert not (dest / "config").exists()
+
+
 def _r2z_with_dir_entry() -> bytes:
     """Minimal r2modman-style zip: empty dir member + child file (the 500 bug)."""
     manifest = """profileName: DirBug
