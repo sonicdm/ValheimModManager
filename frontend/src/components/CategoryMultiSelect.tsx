@@ -72,7 +72,7 @@ export default function CategoryMultiSelect({ mode, options, selected, onChange,
         aria-expanded={open}
         aria-controls={listId}
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full min-w-[12rem] items-center gap-2 rounded-md border border-bark/20 bg-paper px-3 py-2 text-left text-sm text-bark hover:border-bark/40 disabled:opacity-60"
+        className="field flex w-full min-w-[12rem] items-center gap-2 text-left hover:border-bark/40"
       >
         <FilterIcon mode={mode} />
         <span className="min-w-0 flex-1 truncate">{summary}</span>
@@ -85,7 +85,7 @@ export default function CategoryMultiSelect({ mode, options, selected, onChange,
           id={listId}
           role="listbox"
           aria-label={label}
-          className="absolute z-20 mt-1 max-h-72 w-72 overflow-auto rounded-md border border-bark/15 bg-paper shadow-lg"
+          className="absolute z-20 mt-1 max-h-72 w-72 overflow-auto rounded-md border border-bark/15 bg-mist text-ink shadow-lg"
         >
           <div className="sticky top-0 flex items-center justify-between border-b border-bark/10 bg-paper px-3 py-2 text-xs text-bark/60">
             <span>{label}</span>

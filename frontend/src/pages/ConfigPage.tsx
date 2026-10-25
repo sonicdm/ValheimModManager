@@ -63,7 +63,7 @@ export default function ConfigPage() {
       <aside className="rounded-2xl border border-bark/10 bg-paper/80 p-3">
         <h2 className="font-display text-2xl">Configs</h2>
         <input
-          className="mt-2 w-full rounded border border-bark/20 px-2 py-1.5 text-sm"
+          className="field mt-2 w-full px-2 py-1.5"
           placeholder="Filter…"
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
@@ -122,7 +122,7 @@ export default function ConfigPage() {
 
             {mode === "raw" ? (
               <textarea
-                className="mt-4 h-[60vh] w-full rounded-xl border border-bark/15 bg-white p-3 font-mono text-xs"
+                className="field mt-4 h-[60vh] w-full rounded-xl p-3 font-mono text-xs"
                 value={raw}
                 onChange={(e) => setRaw(e.target.value)}
               />
@@ -142,7 +142,7 @@ export default function ConfigPage() {
                           )}
                           {entry.value_type === "bool" ? (
                             <select
-                              className="mt-1 rounded border border-bark/20 px-2 py-1.5"
+                              className="field mt-1"
                               value={entry.value}
                               onChange={(e) => {
                                 const next = structuredClone(content);
@@ -155,7 +155,7 @@ export default function ConfigPage() {
                             </select>
                           ) : entry.value_type === "enum" && entry.enum_values.length ? (
                             <select
-                              className="mt-1 rounded border border-bark/20 px-2 py-1.5"
+                              className="field mt-1"
                               value={entry.value}
                               onChange={(e) => {
                                 const next = structuredClone(content);
@@ -171,7 +171,7 @@ export default function ConfigPage() {
                             </select>
                           ) : (
                             <input
-                              className="mt-1 w-full max-w-md rounded border border-bark/20 px-2 py-1.5"
+                              className="field mt-1 w-full max-w-md"
                               value={entry.value}
                               onChange={(e) => {
                                 const next = structuredClone(content);

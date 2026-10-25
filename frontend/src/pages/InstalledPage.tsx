@@ -449,7 +449,7 @@ export default function InstalledPage() {
             <label className="mt-3 block text-sm">
               Package name override (optional)
               <input
-                className="mt-1 w-full rounded border border-bark/20 px-3 py-2"
+                className="field mt-1 w-full"
                 value={importName}
                 onChange={(e) => setImportName(e.target.value)}
                 placeholder="Author-ModName"
@@ -501,7 +501,7 @@ export default function InstalledPage() {
             <label className="mt-4 block text-sm">
               Store
               <select
-                className="mt-1 w-full rounded border border-bark/20 px-3 py-2"
+                className="field mt-1 w-full"
                 value={linkForm.source}
                 onChange={(e) => setLinkForm({ ...linkForm, source: e.target.value })}
               >
@@ -512,7 +512,7 @@ export default function InstalledPage() {
             <label className="mt-3 block text-sm">
               Search
               <input
-                className="mt-1 w-full rounded border border-bark/20 px-3 py-2"
+                className="field mt-1 w-full"
                 value={linkForm.query}
                 onChange={(e) => setLinkForm({ ...linkForm, query: e.target.value })}
                 placeholder="Jotunn, PortalAtlas…"
@@ -549,7 +549,7 @@ export default function InstalledPage() {
             <label className="mt-3 block text-sm">
               Full name (Team-Mod)
               <input
-                className="mt-1 w-full rounded border border-bark/20 px-3 py-2"
+                className="field mt-1 w-full"
                 value={linkForm.full_name}
                 onChange={(e) => setLinkForm({ ...linkForm, full_name: e.target.value })}
                 required

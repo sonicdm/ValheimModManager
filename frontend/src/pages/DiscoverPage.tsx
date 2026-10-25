@@ -143,7 +143,7 @@ export default function DiscoverPage() {
         }}
       >
         <input
-          className="min-w-[16rem] flex-1 rounded-md border border-bark/20 bg-paper px-3 py-2"
+          className="field min-w-[16rem] flex-1"
           placeholder='Search mods — "exact phrase" or fuzzy words'
           value={q}
           onChange={(e) => setQ(e.target.value)}
@@ -163,7 +163,7 @@ export default function DiscoverPage() {
           disabled={busy}
         />
         <select
-          className="rounded-md border border-bark/20 bg-paper px-3 py-2"
+          className="field"
           value={source}
           onChange={(e) => setSource(e.target.value)}
         >
@@ -172,7 +172,7 @@ export default function DiscoverPage() {
           <option value="hexium">Hexium</option>
         </select>
         <select
-          className="rounded-md border border-bark/20 bg-paper px-3 py-2"
+          className="field"
           value={sort}
           onChange={(e) => setSort(e.target.value)}
         >

@@ -31,13 +31,13 @@ export default function HistoryPage() {
         }}
       >
         <input
-          className="rounded-md border border-bark/20 bg-paper px-3 py-2"
+          className="field"
           placeholder="Search…"
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />
         <select
-          className="rounded-md border border-bark/20 bg-paper px-3 py-2"
+          className="field"
           value={action}
           onChange={(e) => setAction(e.target.value)}
         >

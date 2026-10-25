@@ -109,7 +109,7 @@ export default function SettingsPage() {
           <label className="text-sm">
             Display name
             <input
-              className="mt-1 w-full rounded border border-bark/20 px-3 py-2"
+              className="field mt-1 w-full"
               value={String(values.container_display_name ?? "")}
               onChange={(e) => setField("container_display_name", e.target.value)}
             />
@@ -117,7 +117,7 @@ export default function SettingsPage() {
           <label className="text-sm md:col-span-2">
             Time zone
             <input
-              className="mt-1 w-full rounded border border-bark/20 px-3 py-2"
+              className="field mt-1 w-full"
               list="timezone-options"
               value={String(values.timezone ?? "")}
               onChange={(e) => setField("timezone", e.target.value)}
@@ -141,7 +141,7 @@ export default function SettingsPage() {
           <label className="text-sm md:col-span-2">
             Supervisor URL
             <input
-              className="mt-1 w-full rounded border border-bark/20 px-3 py-2"
+              className="field mt-1 w-full"
               value={String(values.supervisor_url ?? "")}
               onChange={(e) => setField("supervisor_url", e.target.value)}
               placeholder="http://valheim:9001"
@@ -150,7 +150,7 @@ export default function SettingsPage() {
           <label className="text-sm">
             User
             <input
-              className="mt-1 w-full rounded border border-bark/20 px-3 py-2"
+              className="field mt-1 w-full"
               value={String(values.supervisor_user ?? "")}
               onChange={(e) => setField("supervisor_user", e.target.value)}
             />
@@ -159,7 +159,7 @@ export default function SettingsPage() {
             Password
             <input
               type="password"
-              className="mt-1 w-full rounded border border-bark/20 px-3 py-2"
+              className="field mt-1 w-full"
               value={String(values.supervisor_password ?? "")}
               onChange={(e) => setField("supervisor_password", e.target.value)}
               placeholder="leave *** unchanged"
@@ -168,7 +168,7 @@ export default function SettingsPage() {
           <label className="text-sm">
             Program name
             <input
-              className="mt-1 w-full rounded border border-bark/20 px-3 py-2"
+              className="field mt-1 w-full"
               value={String(values.supervisor_program ?? "")}
               onChange={(e) => setField("supervisor_program", e.target.value)}
             />
@@ -200,7 +200,7 @@ export default function SettingsPage() {
           <label className="text-sm">
             Policy
             <select
-              className="mt-1 w-full rounded border border-bark/20 px-3 py-2"
+              className="field mt-1 w-full"
               value={String(values.update_policy ?? "all")}
               onChange={(e) => setField("update_policy", e.target.value)}
             >
@@ -214,7 +214,7 @@ export default function SettingsPage() {
             Check interval (minutes)
             <input
               type="number"
-              className="mt-1 w-full rounded border border-bark/20 px-3 py-2"
+              className="field mt-1 w-full"
               value={Number(values.update_check_minutes ?? 60)}
               onChange={(e) => setField("update_check_minutes", Number(e.target.value))}
             />
@@ -225,7 +225,7 @@ export default function SettingsPage() {
               type="number"
               min={0}
               max={23}
-              className="mt-1 w-full rounded border border-bark/20 px-3 py-2"
+              className="field mt-1 w-full"
               value={Number(values.maintenance_hour ?? 4)}
               onChange={(e) => setField("maintenance_hour", Number(e.target.value))}
             />
@@ -236,7 +236,7 @@ export default function SettingsPage() {
               type="number"
               min={0}
               max={59}
-              className="mt-1 w-full rounded border border-bark/20 px-3 py-2"
+              className="field mt-1 w-full"
               value={Number(values.maintenance_minute ?? 0)}
               onChange={(e) => setField("maintenance_minute", Number(e.target.value))}
             />
@@ -294,7 +294,7 @@ export default function SettingsPage() {
           Current password
           <input
             type="password"
-            className="mt-1 w-full max-w-md rounded border border-bark/20 px-3 py-2"
+            className="field mt-1 w-full max-w-md"
             value={pw.current}
             onChange={(e) => setPw({ ...pw, current: e.target.value })}
           />
@@ -303,7 +303,7 @@ export default function SettingsPage() {
           New password
           <input
             type="password"
-            className="mt-1 w-full max-w-md rounded border border-bark/20 px-3 py-2"
+            className="field mt-1 w-full max-w-md"
             value={pw.next}
             onChange={(e) => setPw({ ...pw, next: e.target.value })}
           />
