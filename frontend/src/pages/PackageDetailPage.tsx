@@ -296,7 +296,7 @@ export default function PackageDetailPage() {
           <label className="text-sm">
             Version
             <select
-              className="mt-1 block rounded-md border border-bark/20 bg-white px-3 py-2 disabled:opacity-60"
+              className="field mt-1 block disabled:opacity-60"
               value={version}
               disabled={busy !== null}
               onChange={(e) => setVersion(e.target.value)}

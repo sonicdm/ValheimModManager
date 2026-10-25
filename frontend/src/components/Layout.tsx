@@ -34,7 +34,7 @@ export default function Layout() {
           <label className="flex items-center gap-2">
             <span className="text-bark/70">Theme</span>
             <select
-              className="rounded-md border border-bark/20 bg-paper px-2 py-1.5 text-sm text-bark"
+              className="field px-2 py-1.5"
               value={preference}
               onChange={(e) => setPreference(e.target.value as ThemePreference)}
               aria-label="Theme"

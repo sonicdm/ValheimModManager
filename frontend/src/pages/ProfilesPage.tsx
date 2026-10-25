@@ -237,7 +237,7 @@ export default function ProfilesPage() {
         <div className="rounded-2xl border border-bark/10 bg-paper/80 p-4 space-y-3">
           <h3 className="font-display text-xl">Save current mods</h3>
           <input
-            className="w-full rounded-md border border-bark/20 bg-paper px-3 py-2 text-sm"
+            className="field w-full"
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
             placeholder="Profile name"
@@ -256,7 +256,7 @@ export default function ProfilesPage() {
           <h3 className="font-display text-xl">Import a profile</h3>
           <form onSubmit={importFromCode} className="flex flex-col gap-2">
             <input
-              className="w-full rounded-md border border-bark/20 bg-paper px-3 py-2 font-mono text-sm"
+              className="field w-full font-mono"
               value={importCode}
               onChange={(e) => setImportCode(e.target.value)}
               placeholder="Paste share code"
